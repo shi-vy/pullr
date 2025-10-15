@@ -7,6 +7,7 @@ services:
       dockerfile: Dockerfile
       args:
         BRANCH: ${BRANCH:-main}
+        COMMIT: ${COMMIT:-unknown}
     image: pullr:${BRANCH:-main}
     container_name: pullr_${BRANCH:-main}
     ports:
@@ -18,4 +19,6 @@ services:
       - ./app/logs:/logs
     environment:
       - TZ=Australia/Brisbane
+      - BRANCH=${BRANCH:-main}
+      - COMMIT=${COMMIT:-unknown}
     restart: unless-stopped
