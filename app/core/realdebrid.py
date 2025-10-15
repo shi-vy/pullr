@@ -90,3 +90,8 @@ class RealDebridClient:
     def select_files(self, torrent_id: str, files: str) -> dict:
         """Tell RealDebrid which files to download (can use 'all' or comma-separated IDs)."""
         return self._request("POST", f"/torrents/selectFiles/{torrent_id}", data={"files": files})
+
+    def delete_torrent(self, torrent_id: str) -> dict:
+        """Delete a torrent from RealDebrid once it’s done."""
+        return self._request("DELETE", f"/torrents/delete/{torrent_id}")
+

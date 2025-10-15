@@ -131,6 +131,11 @@ class TorrentManager:
                 info = self.rd.get_torrent_info(torrent_id)
                 rd_status = info.get("status", "").lower()
 
+                # Skip updates for finished or failed torrents
+                if torrent.state in (TorrentState.FINISHED, TorrentState.FAILED):
+                    self.logger.debug(f"{torrent_id}: Skipping update (state={torrent.state})")
+                    continue
+
                 # NEW: always log RD status to see what's happening
                 self.logger.debug(f"{torrent_id}: RD status -> {rd_status}")
 
@@ -248,7 +253,19 @@ class TorrentManager:
                 torrent.state = TorrentState.AVAILABLE_FROM_REALDEBRID
 
     def _on_download_complete(self, torrent_id: str):
-        self.logger.info(f"Torrent {torrent_id} completed FileOps cycle.")
+        self.logger.info(f"Torrent {torrent_id} completed FileOps cycle. Cleaning up...")
+
+        # Optionally remove RealDebrid torrent if configured
+        if self.config_data.get("delete_on_complete", True):
+            try:
+                self.rd.delete_torrent(torrent_id)
+                self.logger.info(f"Deleted torrent {torrent_id} from RealDebrid.")
+            except Exception as e:
+                self.logger.warning(f"Failed to delete torrent {torrent_id}: {e}")
+
+        # Optionally remove the torrent from memory
+        with self.lock:
+            self.torrents.pop(torrent_id, None)
 
     def on_download_progress(self, torrent_id: str, progress: float):
         with self.lock:
