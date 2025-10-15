@@ -10,6 +10,7 @@ class TorrentState(Enum):
     FINISHED = auto()
     WAITING_FOR_MEDIA_SERVER = auto()
     FAILED = auto()
+    TEST = auto()
 
     def __str__(self):
         return self.name
