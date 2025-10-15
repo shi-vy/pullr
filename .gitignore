@@ -1,0 +1,6 @@
+.venv/
+Pullr_Design.md
+app/downloads/
+app/logs/
+app/media
+config/config.yaml

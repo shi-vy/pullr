@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>🎬 Pullr Dashboard</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <h1>🎬 Pullr Dashboard</h1>
+
+  <form id="add-form">
+    <input type="text" id="magnet-input" name="magnet" placeholder="Enter magnet link" required />
+    <button type="submit">Add</button>
+  </form>
+
+  <table>
+    <thead>
+      <tr><th>ID</th><th>Status</th></tr>
+    </thead>
+    <tbody id="torrentTable"></tbody>
+  </table>
+<div id="fileModal" class="modal" style="display:none;">
+  <div class="modal-content" style="background:#222; padding:1em; border-radius:8px; max-width:600px; margin:auto;">
+    <h2 id="modalTitle">Select Files</h2>
+    <form id="fileForm">
+      <div id="fileList"></div>
+      <div style="margin-top:1em; text-align:right;">
+        <button type="button" id="selectAllBtn">Select All</button>
+        <button type="submit">Download Selected</button>
+        <button type="button" id="closeModal">Cancel</button>
+      </div>
+    </form>
+  </div>
+</div>
+  <script>
+  // --- handle form submission without reload ---
+  const form = document.getElementById('add-form');
+  const input = document.getElementById('magnet-input');
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const magnet = input.value.trim();
+    if (!magnet) return;
+
+    try {
+      const resp = await fetch('/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ magnet })
+      });
+      const data = await resp.json();
+      console.log('Torrent added:', data);
+    } catch (err) {
+      console.error('Error adding torrent:', err);
+    }
+
+    input.value = '';
+  });
+
+  // --- live updates via websocket ---
+  const tableBody = document.getElementById('torrentTable');
+  const colorMap = {
+      WAITING_FOR_SELECTION: "gold",
+      DOWNLOADING_FROM_REALDEBRID: "lightgreen",
+      AVAILABLE_FROM_REALDEBRID: "lightblue",
+      TRANSFERRING_TO_MEDIA_SERVER: "violet",
+      FINISHED: "lime",
+      FAILED: "red"
+    };
+  const ws = new WebSocket("ws://" + window.location.host + "/ws");
+
+  ws.onmessage = (event) => {
+  const torrents = JSON.parse(event.data);
+  console.log("Received update:", torrents);
+
+  tableBody.innerHTML = "";
+
+  for (const [id, info] of Object.entries(torrents)) {
+    const row = document.createElement("tr");
+    const stateName = info.state.replace("TorrentState.", "");
+
+    // Format progress display if downloading
+    const progressDisplay =
+      stateName === "DOWNLOADING_FROM_REALDEBRID" && info.progress > 0
+        ? ` (${info.progress.toFixed(1)}%)`
+        : "";
+
+    let stateHTML = `<span style="color:${colorMap[stateName] || "white"}">${stateName}${progressDisplay}</span>`;
+
+    // Render file selection UI if waiting for selection
+    if (stateName === "WAITING_FOR_SELECTION" && info.files && info.files.length > 0) {
+      stateHTML += `
+        <button onclick="openFileModal('${id}', ${JSON.stringify(info.files).replace(/"/g, "&quot;")})">
+          Select Files
+        </button>`;
+    }
+
+
+    row.innerHTML = `<td>${id}</td><td>${stateHTML}</td>`;
+    tableBody.appendChild(row);
+  }
+};
+
+  ws.onclose = () => {
+    console.log("WebSocket closed. Reconnecting...");
+    setTimeout(() => location.reload(), 2000);
+  };
+
+  function selectAll(torrentId) {
+  fetch(`/select_files/${torrentId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ files: "all" })
+  })
+    .then(() => console.log(`Selected all files for ${torrentId}`))
+    .catch(err => console.error("Select all failed", err));
+}
+
+function submitFileSelection(e, torrentId) {
+  e.preventDefault();
+  const selected = Array.from(e.target.querySelectorAll("input[name=file]:checked"))
+    .map(cb => cb.value)
+    .join(",");
+  if (!selected) {
+    alert("Please select at least one file!");
+    return;
+  }
+
+  fetch(`/select_files/${torrentId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ files: selected })
+  })
+    .then(() => console.log(`Selected files [${selected}] for ${torrentId}`))
+    .catch(err => console.error("File selection failed", err));
+}
+
+const modal = document.getElementById("fileModal");
+const modalTitle = document.getElementById("modalTitle");
+const fileList = document.getElementById("fileList");
+const fileForm = document.getElementById("fileForm");
+let currentTorrentId = null;
+
+function openFileModal(torrentId, files) {
+  currentTorrentId = torrentId;
+  modalTitle.textContent = `Select Files for ${torrentId}`;
+  fileList.innerHTML = files
+    .map(
+      (f) => `
+      <label style="display:block; margin:4px 0;">
+        <input type="checkbox" name="file" value="${f.id}">
+        ${f.name} (${(f.bytes / 1e6).toFixed(1)} MB)
+      </label>`
+    )
+    .join("");
+
+  modal.style.display = "block";
+}
+
+document.getElementById("closeModal").onclick = () => {
+  modal.style.display = "none";
+  fileList.innerHTML = "";
+};
+
+document.getElementById("selectAllBtn").onclick = () => {
+  document.querySelectorAll("#fileList input[type=checkbox]").forEach(cb => cb.checked = true);
+};
+
+fileForm.onsubmit = (e) => {
+  e.preventDefault();
+  const selected = Array.from(document.querySelectorAll("#fileList input:checked"))
+    .map(cb => cb.value)
+    .join(",");
+  if (!selected) {
+    alert("Please select at least one file!");
+    return;
+  }
+
+  fetch(`/select_files/${currentTorrentId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ files: selected })
+  })
+    .then(() => {
+      console.log(`Selected files [${selected}] for ${currentTorrentId}`);
+      modal.style.display = "none";
+      fileList.innerHTML = "";
+    })
+    .catch(err => alert("File selection failed: " + err));
+};
+
+
+  </script>
+</body>
+</html>
