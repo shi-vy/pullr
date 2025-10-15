@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   pullr:
     build:
@@ -10,6 +8,10 @@ services:
         COMMIT: ${COMMIT:-unknown}
     image: pullr:${BRANCH:-main}
     container_name: pullr_${BRANCH:-main}
+    environment:
+      - TZ=Australia/Brisbane
+      - BRANCH=${BRANCH:-main}
+      - COMMIT=${COMMIT:-unknown}
     ports:
       - "8080:8080"
     volumes:
@@ -17,8 +19,4 @@ services:
       - /mnt/dugong/media:/media
       - ./config:/config
       - ./app/logs:/logs
-    environment:
-      - TZ=Australia/Brisbane
-      - BRANCH=${BRANCH:-main}
-      - COMMIT=${COMMIT:-unknown}
     restart: unless-stopped

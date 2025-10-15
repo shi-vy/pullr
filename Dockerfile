@@ -10,23 +10,23 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Install git (to switch branches)
+# Install required tools
 RUN apt-get update && apt-get install -y git curl && rm -rf /var/lib/apt/lists/*
 
-# Copy your whole repo into the image (so it can checkout branches)
-COPY . /src
-WORKDIR /src
+# Copy everything (including .git if available)
+COPY . /app
 
-# Switch to the desired branch if it exists
-RUN git rev-parse --is-inside-work-tree >/dev/null 2>&1 && \
-    git fetch --all && \
-    git checkout ${BRANCH} || echo "Branch ${BRANCH} not found, using current branch."
-
-# Move the desired code into /app
-RUN mkdir -p /app && cp -r app config requirements.txt /app/ && mkdir -p /app/logs /downloads /media
-WORKDIR /app
+# If .git exists, checkout branch
+RUN if [ -d .git ]; then \
+      echo "Checking out branch ${BRANCH}" && \
+      git fetch --all && \
+      git checkout ${BRANCH} || echo "Branch ${BRANCH} not found, using current branch"; \
+    else \
+      echo "No .git directory found — skipping checkout."; \
+    fi
 
 RUN pip install --no-cache-dir -r requirements.txt
+RUN mkdir -p /downloads /media /logs
 
 EXPOSE 8080
 CMD ["python", "app/main.py"]
