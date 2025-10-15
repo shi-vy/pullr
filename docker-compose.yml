@@ -1,0 +1,16 @@
+version: "3.9"
+
+services:
+  pullr:
+    build: .
+    container_name: pullr
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config:/config
+      - ./app/logs:/logs
+      - /mnt/dugong:/media          # Change this to your real NAS/media path
+      - /mnt/bilby:/downloads  # Same here — real external path
+    environment:
+      - TZ=Australia/Brisbane
+    restart: unless-stopped
