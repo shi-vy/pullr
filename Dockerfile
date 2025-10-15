@@ -1,6 +1,10 @@
 # syntax=docker/dockerfile:1
 FROM python:3.13-slim
 
+# Accept the branch name at build time (default to "main" if not passed)
+ARG BRANCH=main
+ENV BRANCH=${BRANCH}
+
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
