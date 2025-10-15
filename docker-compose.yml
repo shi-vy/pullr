@@ -7,10 +7,10 @@ services:
     ports:
       - "8080:8080"
     volumes:
+      - /mnt/bilby/downloads:/downloads
+      - /mnt/dugong/media:/media
       - ./config:/config
       - ./app/logs:/logs
-      - /mnt/dugong:/media          # Change this to your real NAS/media path
-      - /mnt/bilby:/downloads  # Same here — real external path
     environment:
       - TZ=Australia/Brisbane
     restart: unless-stopped
