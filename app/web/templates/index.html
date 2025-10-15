@@ -190,5 +190,23 @@ fileForm.onsubmit = (e) => {
 
 
   </script>
+<footer id="version-footer" style="text-align:center; margin-top:1em; color:#666; font-size:0.9em;">
+  Loading version info...
+</footer>
+
+<script>
+async function showVersion() {
+  try {
+    const resp = await fetch('/version');
+    const data = await resp.json();
+    const footer = document.getElementById('version-footer');
+    footer.textContent = `Pullr – ${data.branch} @ ${data.commit}`;
+  } catch (e) {
+    console.error("Failed to fetch version info:", e);
+  }
+}
+showVersion();
+</script>
+
 </body>
 </html>
