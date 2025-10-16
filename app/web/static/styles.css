@@ -97,6 +97,9 @@ button:hover {
 .file-row input[type="checkbox"] {
   margin-top: 3px;
   flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
 }
 
 .file-details {
