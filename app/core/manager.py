@@ -24,6 +24,7 @@ class TorrentItem:
         self.next_unrestrict_at = 0   # epoch seconds
         # Download trigger flag (so FileOps starts only once)
         self._download_started = False
+        self.selected_files = []
 
     def schedule_unrestrict_retry(self):
         # exponential backoff with jitter, cap at 10 min
@@ -101,7 +102,8 @@ class TorrentManager:
                 tid: {
                     "state": str(t.state),
                     "progress": t.progress,
-                    "files": getattr(t, "files", [])
+                    "files": getattr(t, "files", []),
+                    "display_name": ", ".join(t.selected_files) if t.selected_files else tid
                 }
                 for tid, t in self.torrents.items()
             }
