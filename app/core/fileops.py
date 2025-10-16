@@ -4,7 +4,8 @@ import shutil
 import threading
 import time
 from pathlib import Path
-
+from urllib.parse import unquote
+import re
 import requests
 from core.states import TorrentState
 
@@ -37,7 +38,15 @@ class FileOps:
             media_path.mkdir(parents=True, exist_ok=True)
 
             for i, url in enumerate(torrent.direct_links, start=1):
-                filename = url.split("/")[-1].split("?")[0]
+                # Extract the raw filename from URL
+                raw_name = url.split("/")[-1].split("?")[0]
+
+                # Decode URL-encoded characters like %20, %28, etc.
+                filename = unquote(raw_name)
+
+                # Sanitize filename to avoid filesystem issues
+                filename = re.sub(r'[<>:"/\\|?*]', "_", filename)
+
                 dest = temp_path / filename
                 self.logger.info(f"Downloading file {i}/{len(torrent.direct_links)}: {filename}")
                 self._download_file(url, dest,
