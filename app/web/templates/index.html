@@ -19,15 +19,15 @@
     <tbody id="torrentTable"></tbody>
   </table>
 
-  <div id="fileModal" class="modal">
+  <div id="fileModal" class="modal" style="display:none;">
     <div class="modal-content">
       <h2 id="modalTitle">Select Files</h2>
       <form id="fileForm">
         <div id="fileList"></div>
-        <div class="modal-buttons">
-          <button type="submit" class="btn-download-selected">Download Selected</button>
-          <button type="button" id="selectAllBtn" class="btn-download-all">Download All</button>
-          <button type="button" id="closeModal" class="btn-cancel">Cancel</button>
+        <div class="button-row">
+          <button type="submit" class="green">Download Selected</button>
+          <button type="button" id="downloadAllBtn" class="blue">Download All</button>
+          <button type="button" id="cancelBtn" class="gray">Cancel</button>
         </div>
       </form>
     </div>
@@ -118,27 +118,26 @@
     currentTorrentId = torrentId;
     modalTitle.textContent = `Select Files for ${torrentId}`;
 
-    fileList.innerHTML = files
-      .map((f) => `
-        <div class="file-item">
-          <input type="checkbox" name="file" value="${f.id}" id="file_${f.id}">
-          <label class="file-info" for="file_${f.id}">
-            <span class="file-name">${f.name}</span>
-            <span class="file-size">${(f.bytes / 1e6).toFixed(1)} MB</span>
-          </label>
-        </div>
-      `).join("");
+    fileList.innerHTML = files.map((f) => `
+      <div class="file-row">
+        <input type="checkbox" name="file" value="${f.id}" id="cb_${f.id}">
+        <label for="cb_${f.id}" class="file-details">
+          <span class="filename">${f.name}</span>
+          <span class="filesize">${(f.bytes / 1e6).toFixed(1)} MB</span>
+        </label>
+      </div>
+    `).join("");
 
     modal.style.display = "block";
   }
 
-  document.getElementById("closeModal").onclick = () => {
+  document.getElementById("cancelBtn").onclick = () => {
     modal.style.display = "none";
     fileList.innerHTML = "";
     currentTorrentId = null;
   };
 
-  document.getElementById("selectAllBtn").onclick = () => {
+  document.getElementById("downloadAllBtn").onclick = () => {
     if (!currentTorrentId) return;
 
     fetch(`/select_files/${currentTorrentId}`, {
@@ -160,6 +159,7 @@
     const selected = Array.from(document.querySelectorAll("#fileList input:checked"))
       .map(cb => cb.value)
       .join(",");
+
     if (!selected) {
       alert("Please select at least one file!");
       return;
