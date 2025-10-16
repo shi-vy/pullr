@@ -19,46 +19,46 @@
     <tbody id="torrentTable"></tbody>
   </table>
 <div id="fileModal" class="modal" style="display:none;">
-  <div class="modal-content">
-    <h2 id="modalTitle">Select Files</h2>
-    <form id="fileForm">
-      <div id="fileList"></div>
-      <div class="modal-buttons">
-        <button type="submit" class="btn-download">Download Selected</button>
-        <button type="button" id="selectAllBtn" class="btn-download-all">Download All</button>
-        <button type="button" id="closeModal" class="btn-cancel">Cancel</button>
-      </div>
-    </form>
+    <div class="modal-content">
+      <h2 id="modalTitle">Select Files</h2>
+      <form id="fileForm">
+        <div id="fileList"></div>
+        <div class="button-group">
+          <button type="submit" id="downloadSelectedBtn">Download Selected</button>
+          <button type="button" id="selectAllBtn">Download All</button>
+          <button type="button" id="closeModal">Cancel</button>
+        </div>
+      </form>
+    </div>
   </div>
-</div>
   <script>
-  // --- handle form submission without reload ---
-  const form = document.getElementById('add-form');
-  const input = document.getElementById('magnet-input');
+    // --- handle form submission without reload ---
+    const form = document.getElementById('add-form');
+    const input = document.getElementById('magnet-input');
 
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const magnet = input.value.trim();
-    if (!magnet) return;
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const magnet = input.value.trim();
+      if (!magnet) return;
 
-    try {
-      const resp = await fetch('/add', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ magnet })
-      });
-      const data = await resp.json();
-      console.log('Torrent added:', data);
-    } catch (err) {
-      console.error('Error adding torrent:', err);
-    }
+      try {
+        const resp = await fetch('/add', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ magnet })
+        });
+        const data = await resp.json();
+        console.log('Torrent added:', data);
+      } catch (err) {
+        console.error('Error adding torrent:', err);
+      }
 
-    input.value = '';
-  });
+      input.value = '';
+    });
 
-  // --- live updates via websocket ---
-  const tableBody = document.getElementById('torrentTable');
-  const colorMap = {
+    // --- live updates via websocket ---
+    const tableBody = document.getElementById('torrentTable');
+    const colorMap = {
       WAITING_FOR_SELECTION: "gold",
       DOWNLOADING_FROM_REALDEBRID: "lightgreen",
       AVAILABLE_FROM_REALDEBRID: "lightblue",
@@ -66,153 +66,127 @@
       FINISHED: "lime",
       FAILED: "red"
     };
-  const ws = new WebSocket("ws://" + window.location.host + "/ws");
+    const ws = new WebSocket("ws://" + window.location.host + "/ws");
 
-  ws.onmessage = (event) => {
-  const torrents = JSON.parse(event.data);
-  console.log("Received update:", torrents);
+    ws.onmessage = (event) => {
+      const torrents = JSON.parse(event.data);
+      console.log("Received update:", torrents);
 
-  tableBody.innerHTML = "";
+      tableBody.innerHTML = "";
 
-  for (const [id, info] of Object.entries(torrents)) {
-    const row = document.createElement("tr");
-    const stateName = info.state.replace("TorrentState.", "");
+      for (const [id, info] of Object.entries(torrents)) {
+        const row = document.createElement("tr");
+        const stateName = info.state.replace("TorrentState.", "");
 
-    const displayName = info.display_name || id;
+        const displayName = info.display_name || id;
 
-    // Format progress display if downloading
-    const progressDisplay =
-      stateName === "DOWNLOADING_FROM_REALDEBRID" && info.progress > 0
-        ? ` (${info.progress.toFixed(1)}%)`
-        : "";
+        // Format progress display if downloading
+        const progressDisplay =
+          stateName === "DOWNLOADING_FROM_REALDEBRID" && info.progress > 0
+            ? ` (${info.progress.toFixed(1)}%)`
+            : "";
 
-    let stateHTML = `<span style="color:${colorMap[stateName] || "white"}">${stateName}${progressDisplay}</span>`;
+        let stateHTML = `<span style="color:${colorMap[stateName] || "white"}">${stateName}${progressDisplay}</span>`;
 
-    // Render file selection UI if waiting for selection
-    if (stateName === "WAITING_FOR_SELECTION" && info.files && info.files.length > 0) {
-      stateHTML += `
-        <button onclick="openFileModal('${id}', ${JSON.stringify(info.files).replace(/"/g, "&quot;")})">
-          Select Files
-        </button>`;
+        // Render file selection UI if waiting for selection
+        if (stateName === "WAITING_FOR_SELECTION" && info.files && info.files.length > 0) {
+          stateHTML += `
+            <button onclick="openFileModal('${id}', ${JSON.stringify(info.files).replace(/"/g, "&quot;")})">
+              Select Files
+            </button>`;
+        }
+
+        row.innerHTML = `<td>${displayName}</td><td>${stateHTML}</td>`;
+        tableBody.appendChild(row);
+      }
+    };
+
+    ws.onclose = () => {
+      console.log("WebSocket closed. Reconnecting...");
+      setTimeout(() => location.reload(), 2000);
+    };
+
+    // --- file selection modal logic ---
+    const modal = document.getElementById("fileModal");
+    const modalTitle = document.getElementById("modalTitle");
+    const fileList = document.getElementById("fileList");
+    const fileForm = document.getElementById("fileForm");
+    let currentTorrentId = null;
+
+    function openFileModal(torrentId, files) {
+      currentTorrentId = torrentId;
+      modalTitle.textContent = `Select Files for ${torrentId}`;
+
+      fileList.innerHTML = files
+        .map(
+          (f) => `
+          <div class="file-item">
+            <input type="checkbox" name="file" value="${f.id}">
+            <label>
+              <span class="file-name">${f.name}</span>
+              <span class="file-size">${(f.bytes / 1e9).toFixed(2)} GB</span>
+            </label>
+          </div>`
+        )
+        .join("");
+
+      modal.style.display = "flex";
     }
 
-
-    row.innerHTML = `<td>${displayName}</td><td>${stateHTML}</td>`;
-    tableBody.appendChild(row);
-  }
-};
-
-  ws.onclose = () => {
-    console.log("WebSocket closed. Reconnecting...");
-    setTimeout(() => location.reload(), 2000);
-  };
-
-  function selectAll(torrentId) {
-  fetch(`/select_files/${torrentId}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ files: "all" })
-  })
-    .then(() => console.log(`Selected all files for ${torrentId}`))
-    .catch(err => console.error("Select all failed", err));
-}
-
-function submitFileSelection(e, torrentId) {
-  e.preventDefault();
-  const selected = Array.from(e.target.querySelectorAll("input[name=file]:checked"))
-    .map(cb => cb.value)
-    .join(",");
-  if (!selected) {
-    alert("Please select at least one file!");
-    return;
-  }
-
-  fetch(`/select_files/${torrentId}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ files: selected })
-  })
-    .then(() => console.log(`Selected files [${selected}] for ${torrentId}`))
-    .catch(err => console.error("File selection failed", err));
-}
-
-const modal = document.getElementById("fileModal");
-const modalTitle = document.getElementById("modalTitle");
-const fileList = document.getElementById("fileList");
-const fileForm = document.getElementById("fileForm");
-let currentTorrentId = null;
-
-function openFileModal(torrentId, files) {
-  currentTorrentId = torrentId;
-  modalTitle.textContent = `Select Files for ${torrentId}`;
-  fileList.innerHTML = files
-    .map(
-      (f) => `
-      <div class="file-item">
-        <input type="checkbox" name="file" value="${f.id}">
-        <label>
-          <span class="file-name">${f.name}</span>
-          <span class="file-size">${(f.bytes / 1e6).toFixed(1)} MB</span>
-        </label>
-      </div>`
-    )
-    .join("");
-
-  modal.style.display = "block";
-}
-
-document.getElementById("closeModal").onclick = () => {
-  modal.style.display = "none";
-  fileList.innerHTML = "";
-};
-
-document.getElementById("selectAllBtn").onclick = (e) => {
-  e.preventDefault();
-  document.querySelectorAll("#fileList input[type=checkbox]").forEach(cb => cb.checked = true);
-};
-
-fileForm.onsubmit = (e) => {
-  e.preventDefault();
-  const selected = Array.from(document.querySelectorAll("#fileList input:checked"))
-    .map(cb => cb.value)
-    .join(",");
-  if (!selected) {
-    alert("Please select at least one file!");
-    return;
-  }
-
-  fetch(`/select_files/${currentTorrentId}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ files: selected })
-  })
-    .then(() => {
-      console.log(`Selected files [${selected}] for ${currentTorrentId}`);
+    document.getElementById("closeModal").onclick = (e) => {
+      e.preventDefault();
       modal.style.display = "none";
       fileList.innerHTML = "";
-    })
-    .catch(err => alert("File selection failed: " + err));
-};
+    };
 
+    document.getElementById("selectAllBtn").onclick = (e) => {
+      e.preventDefault();
+      document.querySelectorAll("#fileList input[type=checkbox]").forEach(cb => cb.checked = true);
+    };
+
+    fileForm.onsubmit = (e) => {
+      e.preventDefault();
+      const selected = Array.from(document.querySelectorAll("#fileList input:checked"))
+        .map(cb => cb.value)
+        .join(",");
+
+      if (!selected) {
+        alert("Please select at least one file!");
+        return;
+      }
+
+      fetch(`/select_files/${currentTorrentId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ files: selected })
+      })
+        .then(() => {
+          console.log(`Selected files [${selected}] for ${currentTorrentId}`);
+          modal.style.display = "none";
+          fileList.innerHTML = "";
+        })
+        .catch(err => alert("File selection failed: " + err));
+    };
 
   </script>
-<footer id="version-footer" style="text-align:center; margin-top:1em; color:#666; font-size:0.9em;">
-  Loading version info...
-</footer>
 
-<script>
-async function showVersion() {
-  try {
-    const resp = await fetch('/version');
-    const data = await resp.json();
-    const footer = document.getElementById('version-footer');
-    footer.textContent = `Pullr – ${data.branch} @ ${data.commit}`;
-  } catch (e) {
-    console.error("Failed to fetch version info:", e);
-  }
-}
-showVersion();
-</script>
+  <footer id="version-footer" style="text-align:center; margin-top:1em; color:#666; font-size:0.9em;">
+    Loading version info...
+  </footer>
+
+  <script>
+    async function showVersion() {
+      try {
+        const resp = await fetch('/version');
+        const data = await resp.json();
+        const footer = document.getElementById('version-footer');
+        footer.textContent = `Pullr – ${data.branch} @ ${data.commit}`;
+      } catch (e) {
+        console.error("Failed to fetch version info:", e);
+      }
+    }
+    showVersion();
+  </script>
 
 </body>
 </html>
