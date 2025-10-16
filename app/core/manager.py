@@ -261,6 +261,14 @@ class TorrentManager:
             if not torrent:
                 return
 
+        # Delete torrent from RealDebrid
+        if self.config_data.get("delete_on_complete", True):
+            try:
+                self.rd.delete_torrent(torrent_id)
+                self.logger.info(f"Deleted torrent {torrent_id} from RealDebrid.")
+            except Exception as e:
+                self.logger.warning(f"Failed to delete torrent {torrent_id}: {e}")
+
         # Delete downloads from RealDebrid
         if self.config_data.get("delete_downloads_on_complete", True):
             for link in torrent.direct_links:
@@ -273,14 +281,6 @@ class TorrentManager:
                         self.logger.info(f"Deleted download {download_id} from RealDebrid.")
                 except Exception as e:
                     self.logger.warning(f"Failed to delete download from RealDebrid: {e}")
-
-        # Delete torrent from RealDebrid
-        if self.config_data.get("delete_on_complete", True):
-            try:
-                self.rd.delete_torrent(torrent_id)
-                self.logger.info(f"Deleted torrent {torrent_id} from RealDebrid.")
-            except Exception as e:
-                self.logger.warning(f"Failed to delete torrent {torrent_id}: {e}")
 
         # Clean up temporary download directory
         try:
