@@ -88,22 +88,20 @@ async def select_files(torrent_id: str, files: str = Form(...)):
         logger.error(f"Error selecting files for {torrent_id}: {e}")
         return {"status": "error", "error": str(e)}
 
+
 @app.get("/version")
 async def get_version():
     """Return build metadata for display in the UI."""
-    return {
-        "branch": os.getenv("BRANCH", "unknown"),
-        "commit": os.getenv("COMMIT", "unknown")
-    }
+    try:
+        with open("/app/commit.txt") as f:
+            commit = f.read().strip()
+    except:
+        commit = "unknown"
 
-@app.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request):
-    torrents = torrent_manager.get_status() if torrent_manager else {}
-    return templates.TemplateResponse(
-        "index.html",
-        {
-            "request": request,
-            "torrents": torrents,
-            "version": os.getenv("COMMIT", "dev")  # Or use timestamp
-        }
-    )
+    try:
+        with open("/app/branch.txt") as f:
+            branch = f.read().strip()
+    except:
+        branch = "unknown"
+
+    return {"branch": branch, "commit": commit}
