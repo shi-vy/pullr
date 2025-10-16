@@ -130,13 +130,13 @@ class TorrentManager:
 
         for torrent_id, torrent in items:
             try:
-                info = self.rd.get_torrent_info(torrent_id)
-                rd_status = info.get("status", "").lower()
-
-                # Skip updates for finished or failed torrents
+                # Skip updates for finished or failed torrents BEFORE making API call
                 if torrent.state in (TorrentState.FINISHED, TorrentState.FAILED):
                     self.logger.debug(f"{torrent_id}: Skipping update (state={torrent.state})")
                     continue
+
+                info = self.rd.get_torrent_info(torrent_id)
+                rd_status = info.get("status", "").lower()
 
                 # NEW: always log RD status to see what's happening
                 self.logger.debug(f"{torrent_id}: RD status -> {rd_status}")
@@ -162,7 +162,6 @@ class TorrentManager:
 
                 elif rd_status in ["magnet_conversion", "magnet_converting", "queued", "downloading"]:
                     torrent.state = TorrentState.WAITING_FOR_REALDEBRID
-
 
                 # --- ready / finished states ---
                 elif rd_status in ["downloaded", "magnet_conversion_complete", "ready", "finished"]:
