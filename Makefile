@@ -1,19 +1,19 @@
 BRANCH ?= main
-COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
 build:
-	BRANCH=$(BRANCH) COMMIT=$(COMMIT) docker compose build \
+	docker compose build \
 		--build-arg BRANCH=$(BRANCH) \
-		--build-arg COMMIT=$(COMMIT)
+		--build-arg COMMIT=unknown
 
 up:
-	BRANCH=$(BRANCH) COMMIT=$(COMMIT) docker compose up -d
+	docker compose up -d
+
+dev: build up
+	@COMMIT=$$(docker inspect pullr_$(BRANCH) --format='{{.Config.Env}}' | grep -oP 'COMMIT=\K[^,]*' || echo "unknown") && \
+	echo "✓ Started pullr:$(BRANCH):$$COMMIT"
 
 down:
 	docker compose down
-
-dev: build up
-	@echo "✓ Started pullr:$(BRANCH) @ $(COMMIT)"
 
 stop:
 	docker compose down
