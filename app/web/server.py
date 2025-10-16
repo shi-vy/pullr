@@ -88,10 +88,17 @@ async def select_files(torrent_id: str, files: str = Form(...)):
         logger.error(f"Error selecting files for {torrent_id}: {e}")
         return {"status": "error", "error": str(e)}
 
+
 @app.get("/version")
 async def get_version():
     """Return build metadata for display in the UI."""
-    return {
-        "branch": os.getenv("BRANCH", "unknown"),
-        "commit": os.getenv("COMMIT", "unknown")
-    }
+    try:
+        with open("/app/commit.txt") as f:
+            commit = f.read().strip()
+        with open("/app/branch.txt") as f:
+            branch = f.read().strip()
+    except:
+        commit = os.getenv("COMMIT", "unknown")
+        branch = os.getenv("BRANCH", "unknown")
+
+    return {"branch": branch, "commit": commit}
