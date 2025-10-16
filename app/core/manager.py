@@ -271,16 +271,11 @@ class TorrentManager:
 
         # Delete downloads from RealDebrid
         if self.config_data.get("delete_downloads_on_complete", True):
-            for link in torrent.direct_links:
-                try:
-                    # Extract download ID from the direct link URL
-                    # Format: https://download.real-debrid.com/d/{download_id}/filename
-                    download_id = link.split("/d/")[1].split("/")[0] if "/d/" in link else None
-                    if download_id:
-                        self.rd.delete_download(download_id)
-                        self.logger.info(f"Deleted download {download_id} from RealDebrid.")
-                except Exception as e:
-                    self.logger.warning(f"Failed to delete download from RealDebrid: {e}")
+            try:
+                self.rd.delete_download(torrent_id)
+                self.logger.info(f"Deleted download {torrent_id} from RealDebrid.")
+            except Exception as e:
+                self.logger.warning(f"Failed to delete download from RealDebrid: {e}")
 
         # Clean up temporary download directory
         try:
