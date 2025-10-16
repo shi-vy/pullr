@@ -16,11 +16,13 @@ RUN apt-get update && apt-get install -y git curl && rm -rf /var/lib/apt/lists/*
 # Copy everything (including .git if available)
 COPY . /app
 
-# If .git exists, checkout branch
+# If .git exists, checkout branch and get the commit hash
 RUN if [ -d .git ]; then \
       echo "Checking out branch ${BRANCH}" && \
       git fetch --all && \
       git checkout ${BRANCH} || echo "Branch ${BRANCH} not found, using current branch"; \
+      COMMIT=$(git rev-parse --short HEAD) && \
+      echo "COMMIT=${COMMIT}" > /tmp/commit.txt; \
     else \
       echo "No .git directory found — skipping checkout."; \
     fi

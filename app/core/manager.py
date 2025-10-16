@@ -264,8 +264,8 @@ class TorrentManager:
                 self.logger.warning(f"Failed to delete torrent {torrent_id}: {e}")
 
         # Optionally remove the torrent from memory
-        with self.lock:
-            self.torrents.pop(torrent_id, None)
+        # with self.lock:
+        #     self.torrents.pop(torrent_id, None)
 
     def on_download_progress(self, torrent_id: str, progress: float):
         with self.lock:
