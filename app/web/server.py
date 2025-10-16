@@ -95,10 +95,13 @@ async def get_version():
     try:
         with open("/app/commit.txt") as f:
             commit = f.read().strip()
+    except:
+        commit = "unknown"
+
+    try:
         with open("/app/branch.txt") as f:
             branch = f.read().strip()
     except:
-        commit = os.getenv("COMMIT", "unknown")
-        branch = os.getenv("BRANCH", "unknown")
+        branch = "unknown"
 
     return {"branch": branch, "commit": commit}
