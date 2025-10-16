@@ -1,4 +1,3 @@
 ```
-make build BRANCH={branch_name}
-make up
+make dev BRANCH={branch_name}
 ```
