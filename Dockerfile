@@ -3,9 +3,9 @@ FROM python:3.13-slim
 
 ARG BRANCH=main
 ARG COMMIT=unknown
-ENV BRANCH=${BRANCH}
-ENV COMMIT=${COMMIT}
-ENV PYTHONUNBUFFERED=1 \
+ENV BRANCH=${BRANCH} \
+    COMMIT=${COMMIT} \
+    PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
 WORKDIR /app
@@ -22,7 +22,8 @@ RUN if [ -d .git ]; then \
       git fetch --all && \
       git checkout ${BRANCH} || echo "Branch ${BRANCH} not found, using current branch"; \
       COMMIT=$(git rev-parse --short HEAD) && \
-      echo "COMMIT=${COMMIT}" > /tmp/commit.txt; \
+      echo "Setting COMMIT=${COMMIT}" && \
+      echo "COMMIT=${COMMIT}" >> /etc/environment; \
     else \
       echo "No .git directory found — skipping checkout."; \
     fi

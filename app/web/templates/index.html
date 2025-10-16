@@ -78,6 +78,8 @@
     const row = document.createElement("tr");
     const stateName = info.state.replace("TorrentState.", "");
 
+    const displayName = info.display_name || id;
+
     // Format progress display if downloading
     const progressDisplay =
       stateName === "DOWNLOADING_FROM_REALDEBRID" && info.progress > 0
@@ -95,7 +97,7 @@
     }
 
 
-    row.innerHTML = `<td>${id}</td><td>${stateHTML}</td>`;
+    row.innerHTML = `<td>${displayName}</td><td>${stateHTML}</td>`;
     tableBody.appendChild(row);
   }
 };

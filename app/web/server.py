@@ -71,6 +71,17 @@ async def select_files(torrent_id: str, files: str = Form(...)):
             file_ids = [int(f) for f in files.split(",") if f.strip().isdigit()]
             torrent_manager.rd.select_torrent_files(torrent_id, file_ids)
 
+        if torrent_manager and torrent_id in torrent_manager.torrents:
+            torrent = torrent_manager.torrents[torrent_id]
+            # Store selected file names for display
+            if files == "all":
+                torrent.selected_files = [f["name"] for f in torrent.files]
+            else:
+                file_ids = [int(f) for f in files.split(",") if f.strip().isdigit()]
+                torrent.selected_files = [
+                    f["name"] for f in torrent.files if f["id"] in file_ids
+                ]
+
         logger.info(f"Selected files {files} for torrent {torrent_id}.")
         return {"status": "ok", "torrent_id": torrent_id, "selected": files}
     except Exception as e:
