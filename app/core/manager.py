@@ -256,7 +256,25 @@ class TorrentManager:
     def _on_download_complete(self, torrent_id: str):
         self.logger.info(f"Torrent {torrent_id} completed FileOps cycle. Cleaning up...")
 
-        # Optionally remove RealDebrid torrent if configured
+        with self.lock:
+            torrent = self.torrents.get(torrent_id)
+            if not torrent:
+                return
+
+        # Delete downloads from RealDebrid
+        if self.config_data.get("delete_downloads_on_complete", True):
+            for link in torrent.direct_links:
+                try:
+                    # Extract download ID from the direct link URL
+                    # Format: https://download.real-debrid.com/d/{download_id}/filename
+                    download_id = link.split("/d/")[1].split("/")[0] if "/d/" in link else None
+                    if download_id:
+                        self.rd.delete_download(download_id)
+                        self.logger.info(f"Deleted download {download_id} from RealDebrid.")
+                except Exception as e:
+                    self.logger.warning(f"Failed to delete download from RealDebrid: {e}")
+
+        # Delete torrent from RealDebrid
         if self.config_data.get("delete_on_complete", True):
             try:
                 self.rd.delete_torrent(torrent_id)
@@ -264,9 +282,16 @@ class TorrentManager:
             except Exception as e:
                 self.logger.warning(f"Failed to delete torrent {torrent_id}: {e}")
 
-        # Optionally remove the torrent from memory
-        # with self.lock:
-        #     self.torrents.pop(torrent_id, None)
+        # Clean up temporary download directory
+        try:
+            from pathlib import Path
+            import shutil
+            temp_path = Path(self.config_data.get("download_temp_path", "/downloads")) / torrent_id
+            if temp_path.exists():
+                shutil.rmtree(temp_path)
+                self.logger.info(f"Deleted temporary files for {torrent_id}")
+        except Exception as e:
+            self.logger.warning(f"Failed to delete temp files for {torrent_id}: {e}")
 
     def on_download_progress(self, torrent_id: str, progress: float):
         with self.lock:
