@@ -4,16 +4,22 @@ body {
   color: #eee;
   margin: 2rem;
 }
-h1 { color: #ff6680; }
+
+h1 {
+  color: #ff6680;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
   margin-top: 1rem;
 }
+
 td, th {
   border: 1px solid #444;
   padding: 0.5rem;
 }
+
 input {
   width: 70%;
   padding: 0.5rem;
@@ -21,6 +27,7 @@ input {
   border-radius: 6px;
   border: 1px solid #444;
 }
+
 button {
   padding: 0.5rem 1rem;
   border: none;
@@ -29,15 +36,132 @@ button {
   border-radius: 6px;
   cursor: pointer;
 }
-button:hover { background: #ff88a0; }
+
+button:hover {
+  background: #ff88a0;
+}
+
+/* Modal buttons need higher specificity */
+.button-row button {
+  padding: 10px 20px;
+  font-size: 1em;
+}
 
 .modal {
   position: fixed;
-  top: 0; left: 0;
-  width: 100%; height: 100%;
-  background: rgba(0,0,0,0.7);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0,0,0,0.8);
   z-index: 1000;
+  overflow-y: auto;
+  padding: 40px 20px;
+}
+
+.modal-content {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 24px;
+  max-width: 650px;
+  margin: 0 auto;
+}
+
+.modal-content h2 {
+  color: #ff6680;
+  margin: 0 0 20px 0;
+  font-size: 1.4em;
+}
+
+#fileList {
+  max-height: 450px;
+  overflow-y: auto;
+  margin-bottom: 24px;
+}
+
+.file-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  background: #252525;
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.file-row:hover {
+  background: #2d2d2d;
+}
+
+.file-row input[type="checkbox"] {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
+.file-details {
+  flex: 1;
+  min-width: 0;
+}
+
+.filename {
+  color: #eee;
+  display: block;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  line-height: 1.4;
+  margin-bottom: 4px;
+}
+
+.filesize {
+  color: #888;
+  font-size: 0.9em;
+}
+
+.button-row {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+button.green {
+  background: #28a745;
+  color: white;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 1em;
+}
+
+button.green:hover {
+  background: #218838;
+}
+
+button.blue {
+  background: #007bff;
+  color: white;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 1em;
+}
+
+button.blue:hover {
+  background: #0056b3;
+}
+
+button.gray {
+  background: #6c757d;
+  color: white;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 1em;
+}
+
+button.gray:hover {
+  background: #545b62;
 }
