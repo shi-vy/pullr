@@ -19,14 +19,14 @@
     <tbody id="torrentTable"></tbody>
   </table>
 
-  <div id="fileModal" class="modal" style="display:none;">
+  <div id="fileModal" class="modal">
     <div class="modal-content">
       <h2 id="modalTitle">Select Files</h2>
       <form id="fileForm">
         <div id="fileList"></div>
         <div class="modal-buttons">
-          <button type="submit" class="btn-primary">Download Selected</button>
-          <button type="button" id="selectAllBtn" class="btn-secondary">Download All</button>
+          <button type="submit" class="btn-download-selected">Download Selected</button>
+          <button type="button" id="selectAllBtn" class="btn-download-all">Download All</button>
           <button type="button" id="closeModal" class="btn-cancel">Cancel</button>
         </div>
       </form>
@@ -117,18 +117,17 @@
   function openFileModal(torrentId, files) {
     currentTorrentId = torrentId;
     modalTitle.textContent = `Select Files for ${torrentId}`;
+
     fileList.innerHTML = files
-      .map(
-        (f) => `
+      .map((f) => `
         <div class="file-item">
           <input type="checkbox" name="file" value="${f.id}" id="file_${f.id}">
-          <div class="file-info">
-            <label for="file_${f.id}" class="file-name">${f.name}</label>
+          <label class="file-info" for="file_${f.id}">
+            <span class="file-name">${f.name}</span>
             <span class="file-size">${(f.bytes / 1e6).toFixed(1)} MB</span>
-          </div>
-        </div>`
-      )
-      .join("");
+          </label>
+        </div>
+      `).join("");
 
     modal.style.display = "block";
   }
@@ -136,6 +135,7 @@
   document.getElementById("closeModal").onclick = () => {
     modal.style.display = "none";
     fileList.innerHTML = "";
+    currentTorrentId = null;
   };
 
   document.getElementById("selectAllBtn").onclick = () => {
@@ -150,6 +150,7 @@
         console.log(`Selected all files for ${currentTorrentId}`);
         modal.style.display = "none";
         fileList.innerHTML = "";
+        currentTorrentId = null;
       })
       .catch(err => alert("Select all failed: " + err));
   };
@@ -173,6 +174,7 @@
         console.log(`Selected files [${selected}] for ${currentTorrentId}`);
         modal.style.display = "none";
         fileList.innerHTML = "";
+        currentTorrentId = null;
       })
       .catch(err => alert("File selection failed: " + err));
   };

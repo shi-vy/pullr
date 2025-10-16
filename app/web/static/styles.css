@@ -4,16 +4,22 @@ body {
   color: #eee;
   margin: 2rem;
 }
-h1 { color: #ff6680; }
+
+h1 {
+  color: #ff6680;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
   margin-top: 1rem;
 }
+
 td, th {
   border: 1px solid #444;
   padding: 0.5rem;
 }
+
 input {
   width: 70%;
   padding: 0.5rem;
@@ -21,6 +27,7 @@ input {
   border-radius: 6px;
   border: 1px solid #444;
 }
+
 button {
   padding: 0.5rem 1rem;
   border: none;
@@ -29,132 +36,143 @@ button {
   border-radius: 6px;
   cursor: pointer;
 }
-button:hover { background: #ff88a0; }
 
-.modal {
-  position: fixed;
-  top: 0; 
-  left: 0;
-  width: 100%; 
-  height: 100%;
-  background: rgba(0,0,0,0.7);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
+button:hover {
+  background: #ff88a0;
 }
 
+/* Modal overlay - covers entire screen */
+.modal {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.8);
+  z-index: 1000;
+  overflow-y: auto;
+  padding: 2rem;
+  box-sizing: border-box;
+}
+
+/* Center the modal content */
 .modal-content {
   background: #222;
-  padding: 1.5em;
+  padding: 2rem;
   border-radius: 8px;
   max-width: 700px;
-  width: 90%;
-  max-height: 80vh;
-  overflow-y: auto;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  margin: 0 auto;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
 }
 
 .modal-content h2 {
   margin-top: 0;
-  margin-bottom: 1em;
+  margin-bottom: 1.5rem;
   color: #ff6680;
-  font-size: 1.3em;
-  word-break: break-word;
+  word-wrap: break-word;
 }
 
+/* File list container */
 #fileList {
-  margin-bottom: 1.5em;
-  max-height: 50vh;
+  margin-bottom: 1.5rem;
+  max-height: 400px;
   overflow-y: auto;
-  padding-right: 0.5em;
 }
 
+/* Individual file item - checkbox and label side by side */
 .file-item {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 0.75em;
-  align-items: start;
-  padding: 0.5em;
-  margin-bottom: 0.5em;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  margin-bottom: 0.5rem;
   background: #2a2a2a;
   border-radius: 4px;
-  transition: background 0.2s;
 }
 
 .file-item:hover {
   background: #333;
 }
 
+/* Checkbox styling */
 .file-item input[type="checkbox"] {
-  width: auto;
-  margin: 0.25em 0 0 0;
+  margin: 0;
+  margin-top: 0.2rem;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
   cursor: pointer;
 }
 
+/* File info container */
 .file-info {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25em;
+  flex: 1;
   min-width: 0;
+  cursor: pointer;
 }
 
 .file-name {
-  word-break: break-word;
-  line-height: 1.4;
+  display: block;
   color: #eee;
+  word-wrap: break-word;
+  margin-bottom: 0.25rem;
+  line-height: 1.4;
 }
 
 .file-size {
-  font-size: 0.85em;
+  display: block;
+  font-size: 0.85rem;
   color: #999;
 }
 
+/* Button container */
 .modal-buttons {
   display: flex;
-  gap: 0.5em;
+  gap: 0.75rem;
   justify-content: flex-end;
-  flex-wrap: wrap;
+  margin-top: 1.5rem;
 }
 
-.btn-primary {
-  background: #4CAF50;
-  color: white;
-  padding: 0.6em 1.2em;
+/* Button styles with specific colors */
+.btn-download-selected {
+  padding: 0.6rem 1.2rem;
   border: none;
   border-radius: 6px;
   cursor: pointer;
-  font-size: 0.95em;
+  font-size: 1rem;
+  background: #4CAF50;
+  color: white;
   font-weight: 500;
 }
 
-.btn-primary:hover {
+.btn-download-selected:hover {
   background: #45a049;
 }
 
-.btn-secondary {
-  background: #2196F3;
-  color: white;
-  padding: 0.6em 1.2em;
+.btn-download-all {
+  padding: 0.6rem 1.2rem;
   border: none;
   border-radius: 6px;
   cursor: pointer;
-  font-size: 0.95em;
+  font-size: 1rem;
+  background: #2196F3;
+  color: white;
   font-weight: 500;
 }
 
-.btn-secondary:hover {
+.btn-download-all:hover {
   background: #0b7dda;
 }
 
 .btn-cancel {
-  background: #666;
-  color: white;
-  padding: 0.6em 1.2em;
+  padding: 0.6rem 1.2rem;
   border: none;
   border-radius: 6px;
   cursor: pointer;
-  font-size: 0.95em;
+  font-size: 1rem;
+  background: #666;
+  color: white;
   font-weight: 500;
 }
 
