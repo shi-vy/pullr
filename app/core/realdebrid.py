@@ -95,3 +95,7 @@ class RealDebridClient:
         """Delete a torrent from RealDebrid once it’s done."""
         return self._request("DELETE", f"/torrents/delete/{torrent_id}")
 
+    def delete_download(self, download_id: str) -> dict:
+        """Delete a download from RealDebrid account."""
+        return self._request("DELETE", f"/downloads/delete/{download_id}")
+
