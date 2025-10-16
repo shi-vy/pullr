@@ -2,10 +2,18 @@ BRANCH ?= main
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
 build:
-	BRANCH=$(BRANCH) COMMIT=$(COMMIT) docker compose build --build-arg BRANCH=$(BRANCH) --build-arg COMMIT=$(COMMIT)
+	BRANCH=$(BRANCH) COMMIT=$(COMMIT) docker compose build \
+		--build-arg BRANCH=$(BRANCH) \
+		--build-arg COMMIT=$(COMMIT)
 
 up:
 	BRANCH=$(BRANCH) COMMIT=$(COMMIT) docker compose up -d
 
 down:
+	docker compose down
+
+dev: build up
+	@echo "✓ Started pullr:$(BRANCH) @ $(COMMIT)"
+
+stop:
 	docker compose down
