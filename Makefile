@@ -1,7 +1,7 @@
 BRANCH ?= main
-COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
 build:
+	$(eval COMMIT := $(shell git rev-parse --short $(BRANCH) 2>/dev/null || echo "unknown"))
 	docker compose build \
 		--build-arg BRANCH=$(BRANCH) \
 		--build-arg COMMIT=$(COMMIT)

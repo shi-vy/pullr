@@ -95,3 +95,15 @@ async def get_version():
         "branch": os.getenv("BRANCH", "unknown"),
         "commit": os.getenv("COMMIT", "unknown")
     }
+
+@app.get("/", response_class=HTMLResponse)
+async def dashboard(request: Request):
+    torrents = torrent_manager.get_status() if torrent_manager else {}
+    return templates.TemplateResponse(
+        "index.html",
+        {
+            "request": request,
+            "torrents": torrents,
+            "version": os.getenv("COMMIT", "dev")  # Or use timestamp
+        }
+    )
