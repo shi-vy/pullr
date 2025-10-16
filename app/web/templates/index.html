@@ -19,14 +19,14 @@
     <tbody id="torrentTable"></tbody>
   </table>
 <div id="fileModal" class="modal" style="display:none;">
-  <div class="modal-content" style="background:#222; padding:1em; border-radius:8px; max-width:600px; margin:auto;">
+  <div class="modal-content">
     <h2 id="modalTitle">Select Files</h2>
     <form id="fileForm">
       <div id="fileList"></div>
-      <div style="margin-top:1em; text-align:right;">
-        <button type="button" id="selectAllBtn">Select All</button>
-        <button type="submit">Download Selected</button>
-        <button type="button" id="closeModal">Cancel</button>
+      <div class="modal-buttons">
+        <button type="submit" class="btn-download">Download Selected</button>
+        <button type="button" id="selectAllBtn" class="btn-download-all">Download All</button>
+        <button type="button" id="closeModal" class="btn-cancel">Cancel</button>
       </div>
     </form>
   </div>
@@ -148,10 +148,13 @@ function openFileModal(torrentId, files) {
   fileList.innerHTML = files
     .map(
       (f) => `
-      <label style="display:block; margin:4px 0;">
+      <div class="file-item">
         <input type="checkbox" name="file" value="${f.id}">
-        ${f.name} (${(f.bytes / 1e6).toFixed(1)} MB)
-      </label>`
+        <label>
+          <span class="file-name">${f.name}</span>
+          <span class="file-size">${(f.bytes / 1e6).toFixed(1)} MB</span>
+        </label>
+      </div>`
     )
     .join("");
 
@@ -163,7 +166,8 @@ document.getElementById("closeModal").onclick = () => {
   fileList.innerHTML = "";
 };
 
-document.getElementById("selectAllBtn").onclick = () => {
+document.getElementById("selectAllBtn").onclick = (e) => {
+  e.preventDefault();
   document.querySelectorAll("#fileList input[type=checkbox]").forEach(cb => cb.checked = true);
 };
 
