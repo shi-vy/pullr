@@ -269,14 +269,6 @@ class TorrentManager:
             except Exception as e:
                 self.logger.warning(f"Failed to delete torrent {torrent_id}: {e}")
 
-        # Delete downloads from RealDebrid
-        if self.config_data.get("delete_downloads_on_complete", True):
-            try:
-                self.rd.delete_download(torrent_id)
-                self.logger.info(f"Deleted download {torrent_id} from RealDebrid.")
-            except Exception as e:
-                self.logger.warning(f"Failed to delete download from RealDebrid: {e}")
-
         # Clean up temporary download directory
         try:
             from pathlib import Path
