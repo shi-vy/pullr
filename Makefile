@@ -7,15 +7,13 @@ build:
 		--build-arg COMMIT=$(COMMIT)
 
 up:
-	BRANCH=$(BRANCH) docker compose up -d
+	BRANCH=$(BRANCH) COMMIT=$(COMMIT) docker compose up -d
 
 down:
 	docker compose down
 
-# One command to build and start a specific branch
 dev: build up
-	@echo "✓ Started pullr:$(BRANCH)"
+	@echo "✓ Started pullr:$(BRANCH) @ $(COMMIT)"
 
-# Shortcut to stop everything
 stop:
 	docker compose down
