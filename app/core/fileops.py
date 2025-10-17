@@ -57,12 +57,33 @@ class FileOps:
             if on_transfer:
                 on_transfer(torrent.id)
 
-            for file in temp_path.iterdir():
-                target = media_path / file.name
-                self.logger.info(f"Transferring {file} -> {target}")
-                shutil.move(str(file), target)
+            # Check if we have multiple files
+            files_in_temp = list(temp_path.iterdir())
 
-            temp_path.rmdir()
+            if len(files_in_temp) == 1 and files_in_temp[0].is_file():
+                # Single file: move directly to media root
+                file = files_in_temp[0]
+                target = media_path / file.name
+                self.logger.info(f"Transferring single file: {file} -> {target}")
+                shutil.move(str(file), target)
+            else:
+                # Multiple files: create a subfolder in media using torrent.id
+                target_folder = media_path / torrent.id
+                self.logger.info(f"Transferring multiple files to folder: {target_folder}")
+
+                # Move the entire temp folder to media
+                if target_folder.exists():
+                    self.logger.warning(f"Target folder {target_folder} already exists, removing it first")
+                    shutil.rmtree(target_folder)
+
+                shutil.move(str(temp_path), str(target_folder))
+                # temp_path is now gone, so we can't rmdir it
+                temp_path = None
+
+            # Clean up temp directory if it still exists
+            if temp_path and temp_path.exists():
+                temp_path.rmdir()
+
             torrent.state = TorrentState.FINISHED
             self.logger.info(f"Torrent {torrent.id} finished successfully.")
             on_complete(torrent.id)
@@ -106,4 +127,3 @@ class FileOps:
                 if attempt == max_retries:
                     raise
                 time.sleep(3 * attempt)
-
