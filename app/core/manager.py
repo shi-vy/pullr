@@ -103,7 +103,7 @@ class TorrentManager:
                     "state": str(t.state),
                     "progress": t.progress,
                     "files": getattr(t, "files", []),
-                    "display_name": ", ".join(t.selected_files) if t.selected_files else tid
+                    "selected_files": t.selected_files if t.selected_files else []
                 }
                 for tid, t in self.torrents.items()
             }

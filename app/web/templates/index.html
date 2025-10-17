@@ -80,7 +80,11 @@
       const row = document.createElement("tr");
       const stateName = info.state.replace("TorrentState.", "");
 
-      const displayName = info.display_name || id;
+      // Display files as separate lines if available
+      let displayName = id;
+      if (info.selected_files && info.selected_files.length > 0) {
+        displayName = info.selected_files.join('<br>');
+      }
 
       // Format progress display if downloading
       const progressDisplay =
