@@ -25,6 +25,7 @@ class TorrentItem:
         # Download trigger flag (so FileOps starts only once)
         self._download_started = False
         self.selected_files = []
+        self.custom_folder_name = None  # NEW: Custom folder name for multi-file downloads
 
     def schedule_unrestrict_retry(self):
         # exponential backoff with jitter, cap at 10 min
@@ -103,7 +104,8 @@ class TorrentManager:
                     "state": str(t.state),
                     "progress": t.progress,
                     "files": getattr(t, "files", []),
-                    "selected_files": t.selected_files if t.selected_files else []
+                    "selected_files": t.selected_files if t.selected_files else [],
+                    "custom_folder_name": getattr(t, "custom_folder_name", None)
                 }
                 for tid, t in self.torrents.items()
             }

@@ -59,10 +59,12 @@ async def websocket_endpoint(websocket: WebSocket):
         if logger:
             logger.warning(f"WebSocket error: {e}")
 
+
 @app.post("/select_files/{torrent_id}")
-async def select_files(torrent_id: str, files: str = Form(...)):
+async def select_files(torrent_id: str, files: str = Form(...), folder_name: str = Form(None)):
     """
     Select specific files (comma-separated IDs or 'all') for a torrent.
+    Also accepts optional folder_name for multi-file downloads.
     """
     try:
         if files == "all":
@@ -73,6 +75,7 @@ async def select_files(torrent_id: str, files: str = Form(...)):
 
         if torrent_manager and torrent_id in torrent_manager.torrents:
             torrent = torrent_manager.torrents[torrent_id]
+
             # Store selected file names for display
             if files == "all":
                 torrent.selected_files = [f["name"] for f in torrent.files]
@@ -81,6 +84,11 @@ async def select_files(torrent_id: str, files: str = Form(...)):
                 torrent.selected_files = [
                     f["name"] for f in torrent.files if f["id"] in file_ids
                 ]
+
+            # Store custom folder name if provided and multiple files selected
+            if folder_name and folder_name.strip():
+                torrent.custom_folder_name = folder_name.strip()
+                logger.info(f"Set custom folder name '{folder_name}' for torrent {torrent_id}")
 
         logger.info(f"Selected files {files} for torrent {torrent_id}.")
         return {"status": "ok", "torrent_id": torrent_id, "selected": files}
