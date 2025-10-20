@@ -24,16 +24,16 @@
       <h2 id="modalTitle">Select Files</h2>
       <form id="fileForm">
         <div id="fileList"></div>
-        <div style="margin: 20px 0;">
+        <div id="folderNameSection" style="margin: 20px 0; display:none;">
           <label for="folderNameInput" style="display:block; margin-bottom:8px; color:#ccc;">
-            Custom Folder Name (for multiple files):
+            Custom Folder Name <span style="color:#ff6680;">*</span> (required for multiple files):
           </label>
           <input type="text" id="folderNameInput" name="folder_name"
-                 placeholder="Optional: e.g., 'Season 1' or 'Movie Collection'"
+                 placeholder="e.g., 'Season 1' or 'Movie Collection'"
                  style="width:100%; padding:10px; background:#252525; color:#eee; border:1px solid #444; border-radius:6px;">
         </div>
         <div class="button-row">
-          <button type="submit" class="green">Download Selected</button>
+          <button type="submit" id="downloadSelectedBtn" class="green">Download Selected</button>
           <button type="button" id="downloadAllBtn" class="blue">Download All</button>
           <button type="button" id="cancelBtn" class="gray">Cancel</button>
         </div>
@@ -125,15 +125,20 @@
   const fileList = document.getElementById("fileList");
   const fileForm = document.getElementById("fileForm");
   const folderNameInput = document.getElementById("folderNameInput");
+  const folderNameSection = document.getElementById("folderNameSection");
+  const downloadSelectedBtn = document.getElementById("downloadSelectedBtn");
+  const downloadAllBtn = document.getElementById("downloadAllBtn");
   let currentTorrentId = null;
+  let totalFiles = 0;
 
   function openFileModal(torrentId, files) {
     currentTorrentId = torrentId;
+    totalFiles = files.length;
     modalTitle.textContent = `Select Files for ${torrentId}`;
 
     fileList.innerHTML = files.map((f) => `
       <div class="file-row">
-        <input type="checkbox" name="file" value="${f.id}" id="cb_${f.id}">
+        <input type="checkbox" name="file" value="${f.id}" id="cb_${f.id}" class="file-checkbox">
         <label for="cb_${f.id}" class="file-details">
           <span class="filename">${f.name}</span>
           <span class="filesize">${(f.bytes / 1e6).toFixed(1)} MB</span>
@@ -142,22 +147,79 @@
     `).join("");
 
     folderNameInput.value = "";
+
+    // Show folder name section only if more than 1 file total
+    if (totalFiles > 1) {
+      folderNameSection.style.display = "block";
+    } else {
+      folderNameSection.style.display = "none";
+    }
+
+    // Add event listeners to checkboxes to update button states
+    document.querySelectorAll(".file-checkbox").forEach(cb => {
+      cb.addEventListener("change", updateButtonStates);
+    });
+
+    // Add event listener to folder name input
+    folderNameInput.addEventListener("input", updateButtonStates);
+
     modal.style.display = "block";
+    updateButtonStates();
+  }
+
+  function updateButtonStates() {
+    const selectedCount = document.querySelectorAll("#fileList input:checked").length;
+    const folderName = folderNameInput.value.trim();
+
+    // If multiple files selected, require folder name
+    if (selectedCount > 1) {
+      const isValid = folderName.length > 0;
+      downloadSelectedBtn.disabled = !isValid;
+      downloadSelectedBtn.style.opacity = isValid ? "1" : "0.5";
+      downloadSelectedBtn.style.cursor = isValid ? "pointer" : "not-allowed";
+    } else {
+      // Single file or no selection - no folder name needed for submit button
+      downloadSelectedBtn.disabled = selectedCount === 0;
+      downloadSelectedBtn.style.opacity = selectedCount > 0 ? "1" : "0.5";
+      downloadSelectedBtn.style.cursor = selectedCount > 0 ? "pointer" : "not-allowed";
+    }
+
+    // Download All button - only enabled if folder name provided (when multiple files exist)
+    if (totalFiles > 1) {
+      const isValid = folderName.length > 0;
+      downloadAllBtn.disabled = !isValid;
+      downloadAllBtn.style.opacity = isValid ? "1" : "0.5";
+      downloadAllBtn.style.cursor = isValid ? "pointer" : "not-allowed";
+    } else {
+      // Single file total - always enabled
+      downloadAllBtn.disabled = false;
+      downloadAllBtn.style.opacity = "1";
+      downloadAllBtn.style.cursor = "pointer";
+    }
   }
 
   document.getElementById("cancelBtn").onclick = () => {
     modal.style.display = "none";
     fileList.innerHTML = "";
     folderNameInput.value = "";
+    folderNameSection.style.display = "none";
     currentTorrentId = null;
+    totalFiles = 0;
   };
 
   document.getElementById("downloadAllBtn").onclick = () => {
     if (!currentTorrentId) return;
 
     const folderName = folderNameInput.value.trim();
+
+    // Validate: if multiple files, folder name is required
+    if (totalFiles > 1 && !folderName) {
+      alert("Please provide a custom folder name for multiple files!");
+      return;
+    }
+
     const params = new URLSearchParams({ files: "all" });
-    if (folderName) {
+    if (folderName && totalFiles > 1) {
       params.append("folder_name", folderName);
     }
 
@@ -171,7 +233,9 @@
         modal.style.display = "none";
         fileList.innerHTML = "";
         folderNameInput.value = "";
+        folderNameSection.style.display = "none";
         currentTorrentId = null;
+        totalFiles = 0;
       })
       .catch(err => alert("Select all failed: " + err));
   };
@@ -187,9 +251,17 @@
       return;
     }
 
+    const selectedCount = document.querySelectorAll("#fileList input:checked").length;
     const folderName = folderNameInput.value.trim();
+
+    // Validate: if multiple files selected, folder name is required
+    if (selectedCount > 1 && !folderName) {
+      alert("Please provide a custom folder name for multiple files!");
+      return;
+    }
+
     const params = new URLSearchParams({ files: selected });
-    if (folderName) {
+    if (folderName && selectedCount > 1) {
       params.append("folder_name", folderName);
     }
 
@@ -203,7 +275,9 @@
         modal.style.display = "none";
         fileList.innerHTML = "";
         folderNameInput.value = "";
+        folderNameSection.style.display = "none";
         currentTorrentId = null;
+        totalFiles = 0;
       })
       .catch(err => alert("File selection failed: " + err));
   };
