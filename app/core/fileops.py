@@ -1,4 +1,3 @@
-# app/core/fileops.py
 import os
 import shutil
 import threading
@@ -67,8 +66,13 @@ class FileOps:
                 self.logger.info(f"Transferring single file: {file} -> {target}")
                 shutil.move(str(file), target)
             else:
-                # Multiple files: create a subfolder in media using torrent.id
-                target_folder = media_path / torrent.id
+                # Multiple files: create a subfolder in media
+                # Use custom folder name if provided, otherwise fall back to torrent.id
+                folder_name = torrent.custom_folder_name if torrent.custom_folder_name else torrent.id
+                # Sanitize folder name
+                folder_name = re.sub(r'[<>:"/\\|?*]', "_", folder_name)
+
+                target_folder = media_path / folder_name
                 self.logger.info(f"Transferring multiple files to folder: {target_folder}")
 
                 # Move the entire temp folder to media
