@@ -1,7 +1,8 @@
 import threading
 import time
 import random
-from typing import Dict
+from typing import Dict, Optional
+from collections import deque
 
 from core.states import TorrentState
 from core.realdebrid import RealDebridClient, RealDebridError
@@ -10,6 +11,7 @@ from core.fileops import FileOps
 
 class TorrentItem:
     """Represents one torrent in the queue."""
+
     def __init__(self, magnet_link: str):
         self.magnet = magnet_link
         self.id = None
@@ -21,11 +23,11 @@ class TorrentItem:
         self.progress = 0.0
         self.files = []
         self.unrestrict_backoff = 60  # seconds, start at 1 min
-        self.next_unrestrict_at = 0   # epoch seconds
+        self.next_unrestrict_at = 0  # epoch seconds
         # Download trigger flag (so FileOps starts only once)
         self._download_started = False
         self.selected_files = []
-        self.custom_folder_name = None  # NEW: Custom folder name for multi-file downloads
+        self.custom_folder_name = None
 
     def schedule_unrestrict_retry(self):
         # exponential backoff with jitter, cap at 10 min
@@ -48,6 +50,8 @@ class TorrentManager:
 
         self.running = False
         self.torrents: Dict[str, TorrentItem] = {}
+        self.queue: deque = deque()  # Queue of torrent IDs to process
+        self.active_torrent_id: Optional[str] = None  # Currently processing torrent
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
@@ -64,7 +68,7 @@ class TorrentManager:
         self.stop_event.clear()
         self.thread = threading.Thread(target=self._poll_loop, daemon=True)
         self.thread.start()
-        self.logger.info("Starting TorrentManager polling thread...")
+        self.logger.info("Starting TorrentManager polling thread with queue system...")
 
     def stop(self):
         """Stops the polling loop cleanly."""
@@ -90,123 +94,157 @@ class TorrentManager:
             item.state = TorrentState.WAITING_FOR_REALDEBRID
             with self.lock:
                 self.torrents[torrent_id] = item
-            self.logger.info(f"Added torrent {torrent_id} to queue.")
+                self.queue.append(torrent_id)
+                queue_position = len(self.queue)
+            self.logger.info(f"Added torrent {torrent_id} to queue at position {queue_position}.")
             return torrent_id
         except RealDebridError as e:
             self.logger.error(f"Failed to add magnet: {e}")
             return None
 
     def get_status(self):
-        """Return a snapshot of current torrent states."""
+        """Return a snapshot of current torrent states with queue information."""
         with self.lock:
-            return {
-                tid: {
+            status = {}
+            for tid, t in self.torrents.items():
+                # Calculate queue position
+                queue_position = None
+                if tid in self.queue:
+                    queue_position = list(self.queue).index(tid) + 1
+
+                is_active = (tid == self.active_torrent_id)
+
+                status[tid] = {
                     "state": str(t.state),
                     "progress": t.progress,
                     "files": getattr(t, "files", []),
                     "selected_files": t.selected_files if t.selected_files else [],
-                    "custom_folder_name": getattr(t, "custom_folder_name", None)
+                    "custom_folder_name": getattr(t, "custom_folder_name", None),
+                    "queue_position": queue_position,
+                    "is_active": is_active
                 }
-                for tid, t in self.torrents.items()
-            }
+            return status
 
     # ------------------------------
     # Internal Polling Loop
     # ------------------------------
     def _poll_loop(self):
-        self.logger.info("Torrent polling loop started.")
+        self.logger.info("Torrent polling loop started with queue system.")
         while not self.stop_event.is_set():
             try:
-                self.logger.debug(f"Polling {len(self.torrents)} torrent(s)...")
-                self._update_all()
+                self._process_queue()
             except Exception as e:
                 self.logger.warning(f"Polling loop error: {e}")
             time.sleep(self.poll_interval)
         self.logger.info("Torrent polling loop stopped.")
 
-    def _update_all(self):
-        """Poll RealDebrid for status updates and trigger FileOps when appropriate."""
-        now = int(time.time())
+    def _process_queue(self):
+        """Process the queue - activate next torrent if needed and update active torrent."""
         with self.lock:
-            items = list(self.torrents.items())
+            # Check if we need to activate the next torrent
+            if self.active_torrent_id is None and len(self.queue) > 0:
+                self.active_torrent_id = self.queue[0]
+                self.logger.info(
+                    f"Activating torrent {self.active_torrent_id} from queue (position 1 of {len(self.queue)})")
 
-        for torrent_id, torrent in items:
-            try:
-                # Skip updates for finished or failed torrents BEFORE making API call
-                if torrent.state in (TorrentState.FINISHED, TorrentState.FAILED):
-                    self.logger.debug(f"{torrent_id}: Skipping update (state={torrent.state})")
-                    continue
+            # If no active torrent, nothing to do
+            if self.active_torrent_id is None:
+                return
 
-                info = self.rd.get_torrent_info(torrent_id)
-                rd_status = info.get("status", "").lower()
+            # Get the active torrent
+            torrent = self.torrents.get(self.active_torrent_id)
+            if not torrent:
+                self.logger.warning(f"Active torrent {self.active_torrent_id} not found in torrents dict!")
+                self.active_torrent_id = None
+                return
 
-                # NEW: always log RD status to see what's happening
-                self.logger.debug(f"{torrent_id}: RD status -> {rd_status}")
+            torrent_id = self.active_torrent_id
 
-                # --- waiting / converting / queued states ---
-                if rd_status == "waiting_files_selection":
-                    try:
-                        files_info = self.rd.list_torrent_files(torrent_id)
-                        torrent.files = [
-                            {
-                                "id": f["id"],
-                                "name": f["path"].split("/")[-1],
-                                "bytes": f["bytes"]
-                            }
-                            for f in files_info.get("files", [])
-                        ]
-                        torrent.state = TorrentState.WAITING_FOR_SELECTION
-                        self.logger.info(
-                            f"{torrent_id}: waiting for file selection ({len(torrent.files)} file(s) found).")
-                    except RealDebridError as e:
-                        self.logger.warning(f"Failed to list files for {torrent_id}: {e}")
-                        torrent.state = TorrentState.WAITING_FOR_REALDEBRID
+        # Update only the active torrent (outside of lock to avoid blocking)
+        try:
+            self._update_torrent(torrent_id, torrent)
+        except Exception as e:
+            self.logger.warning(f"Error updating active torrent {torrent_id}: {e}")
 
-                elif rd_status in ["magnet_conversion", "magnet_converting", "queued", "downloading"]:
+    def _update_torrent(self, torrent_id: str, torrent: TorrentItem):
+        """Update a single torrent's state."""
+        now = int(time.time())
+
+        # Skip updates for finished or failed torrents
+        if torrent.state in (TorrentState.FINISHED, TorrentState.FAILED):
+            self.logger.debug(f"{torrent_id}: Skipping update (state={torrent.state})")
+            return
+
+        try:
+            info = self.rd.get_torrent_info(torrent_id)
+            rd_status = info.get("status", "").lower()
+
+            self.logger.debug(f"{torrent_id}: RD status -> {rd_status}")
+
+            # --- waiting / converting / queued states ---
+            if rd_status == "waiting_files_selection":
+                try:
+                    files_info = self.rd.list_torrent_files(torrent_id)
+                    torrent.files = [
+                        {
+                            "id": f["id"],
+                            "name": f["path"].split("/")[-1],
+                            "bytes": f["bytes"]
+                        }
+                        for f in files_info.get("files", [])
+                    ]
+                    torrent.state = TorrentState.WAITING_FOR_SELECTION
+                    self.logger.info(
+                        f"{torrent_id}: waiting for file selection ({len(torrent.files)} file(s) found).")
+                except RealDebridError as e:
+                    self.logger.warning(f"Failed to list files for {torrent_id}: {e}")
                     torrent.state = TorrentState.WAITING_FOR_REALDEBRID
 
-                # --- ready / finished states ---
-                elif rd_status in ["downloaded", "magnet_conversion_complete", "ready", "finished"]:
-                    links = info.get("links", [])
-                    if not links:
-                        torrent.state = TorrentState.WAITING_FOR_REALDEBRID
+            elif rd_status in ["magnet_conversion", "magnet_converting", "queued", "downloading"]:
+                torrent.state = TorrentState.WAITING_FOR_REALDEBRID
+
+            # --- ready / finished states ---
+            elif rd_status in ["downloaded", "magnet_conversion_complete", "ready", "finished"]:
+                links = info.get("links", [])
+                if not links:
+                    torrent.state = TorrentState.WAITING_FOR_REALDEBRID
+                else:
+                    # Skip unrestrict if we already have direct links
+                    if torrent.direct_links:
+                        torrent.state = TorrentState.AVAILABLE_FROM_REALDEBRID
                     else:
-                        # Skip unrestrict if we already have direct links
-                        if torrent.direct_links:
+                        # Respect backoff before attempting unrestrict
+                        if torrent.next_unrestrict_at and now < torrent.next_unrestrict_at:
                             torrent.state = TorrentState.AVAILABLE_FROM_REALDEBRID
                         else:
-                            # Respect backoff before attempting unrestrict
-                            if torrent.next_unrestrict_at and now < torrent.next_unrestrict_at:
-                                torrent.state = TorrentState.AVAILABLE_FROM_REALDEBRID
-                            else:
-                                self._attempt_unrestrict(torrent_id, torrent, links)
+                            self._attempt_unrestrict(torrent_id, torrent, links)
 
-                        # If available, trigger FileOps once
-                        if (torrent.state == TorrentState.AVAILABLE_FROM_REALDEBRID
-                                and torrent.direct_links
-                                and not torrent._download_started):
-                            torrent._download_started = True
-                            self.logger.info(f"Triggering FileOps for torrent {torrent.id}...")
-                            self.fileops.start_download(
-                                torrent,
-                                config=self.config_data,
-                                on_complete=self._on_download_complete,
-                                on_progress=self.on_download_progress,
-                                on_transfer=lambda tid=torrent.id: self.on_transfer_complete(tid)
-                            )
+                    # If available, trigger FileOps once
+                    if (torrent.state == TorrentState.AVAILABLE_FROM_REALDEBRID
+                            and torrent.direct_links
+                            and not torrent._download_started):
+                        torrent._download_started = True
+                        self.logger.info(f"Triggering FileOps for torrent {torrent.id}...")
+                        self.fileops.start_download(
+                            torrent,
+                            config=self.config_data,
+                            on_complete=self._on_download_complete,
+                            on_progress=self.on_download_progress,
+                            on_transfer=lambda tid=torrent.id: self.on_transfer_complete(tid)
+                        )
 
-                elif rd_status == "error":
-                    torrent.state = TorrentState.FAILED
+            elif rd_status == "error":
+                torrent.state = TorrentState.FAILED
+                self.logger.error(f"Torrent {torrent_id} failed with error status from RealDebrid")
 
-                # NEW: handle any other unexpected RD status explicitly
-                else:
-                    self.logger.debug(
-                        f"{torrent_id}: Unhandled RD status '{rd_status}', leaving state as {torrent.state}.")
+            else:
+                self.logger.debug(
+                    f"{torrent_id}: Unhandled RD status '{rd_status}', leaving state as {torrent.state}.")
 
-                torrent.last_update = time.time()
+            torrent.last_update = time.time()
 
-            except RealDebridError as e:
-                self.logger.warning(f"Error updating torrent {torrent_id}: {e}")
+        except RealDebridError as e:
+            self.logger.warning(f"Error updating torrent {torrent_id}: {e}")
 
     # ------------------------------
     # Helpers
@@ -256,6 +294,7 @@ class TorrentManager:
                 torrent.state = TorrentState.AVAILABLE_FROM_REALDEBRID
 
     def _on_download_complete(self, torrent_id: str):
+        """Called when a torrent completes (success or failure)."""
         self.logger.info(f"Torrent {torrent_id} completed FileOps cycle. Cleaning up...")
 
         with self.lock:
@@ -281,6 +320,18 @@ class TorrentManager:
                 self.logger.info(f"Deleted temporary files for {torrent_id}")
         except Exception as e:
             self.logger.warning(f"Failed to delete temp files for {torrent_id}: {e}")
+
+        # Move to next torrent in queue
+        with self.lock:
+            # Remove from queue if present
+            if torrent_id in self.queue:
+                self.queue.remove(torrent_id)
+                self.logger.info(f"Removed {torrent_id} from queue. {len(self.queue)} torrent(s) remaining.")
+
+            # Clear active torrent
+            if self.active_torrent_id == torrent_id:
+                self.active_torrent_id = None
+                self.logger.info("Cleared active torrent, next torrent will be activated in next poll cycle.")
 
     def on_download_progress(self, torrent_id: str, progress: float):
         with self.lock:
