@@ -31,6 +31,7 @@ class TorrentItem:
         self.selected_files = []
         self.custom_folder_name = None
         self.error_message = None  # Store error details
+        self.deleted_from_realdebrid = False  # Track if deleted from RD
 
     def schedule_unrestrict_retry(self):
         # exponential backoff with jitter, cap at 10 min
@@ -220,6 +221,11 @@ class TorrentManager:
             self.logger.debug(f"{torrent_id}: Skipping update (state={torrent.state})")
             return
 
+        # Skip updates if torrent was deleted from RealDebrid
+        if torrent.deleted_from_realdebrid:
+            self.logger.debug(f"{torrent_id}: Skipping update (deleted from RealDebrid)")
+            return
+
         try:
             info = self.rd.get_torrent_info(torrent_id)
             rd_status = info.get("status", "").lower()
@@ -312,7 +318,13 @@ class TorrentManager:
             torrent.last_update = time.time()
 
         except RealDebridError as e:
-            self.logger.warning(f"Error updating torrent {torrent_id}: {e}")
+            # Check if it's a 404 error (torrent deleted)
+            if "404" in str(e):
+                self.logger.debug(
+                    f"Torrent {torrent_id} not found in RealDebrid (likely deleted), skipping further updates")
+                torrent.deleted_from_realdebrid = True
+            else:
+                self.logger.warning(f"Error updating torrent {torrent_id}: {e}")
 
     # ------------------------------
     # External Torrent Scanning
@@ -466,6 +478,10 @@ class TorrentManager:
             try:
                 self.rd.delete_torrent(torrent_id)
                 self.logger.info(f"Deleted torrent {torrent_id} from RealDebrid.")
+                # Mark as deleted so we stop trying to poll it
+                with self.lock:
+                    if torrent_id in self.torrents:
+                        self.torrents[torrent_id].deleted_from_realdebrid = True
             except Exception as e:
                 self.logger.warning(f"Failed to delete torrent {torrent_id}: {e}")
 
@@ -491,11 +507,6 @@ class TorrentManager:
             if self.active_torrent_id == torrent_id:
                 self.active_torrent_id = None
                 self.logger.info("Cleared active torrent, next torrent will be activated in next poll cycle.")
-
-            # CRITICAL FIX: Remove torrent from torrents dict to stop polling it
-            if torrent_id in self.torrents:
-                del self.torrents[torrent_id]
-                self.logger.info(f"Removed torrent {torrent_id} from torrents dict (no longer tracked)")
 
     def on_download_progress(self, torrent_id: str, progress: float):
         with self.lock:
