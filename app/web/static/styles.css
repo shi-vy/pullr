@@ -20,6 +20,12 @@ td, th {
   padding: 0.5rem;
 }
 
+/* Highlight active torrent row */
+tr.active-torrent {
+  background: #1a2a1a;
+  border-left: 3px solid #28a745;
+}
+
 input {
   width: 70%;
   padding: 0.5rem;
@@ -167,4 +173,9 @@ button.gray {
 
 button.gray:hover {
   background: #545b62;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed !important;
 }

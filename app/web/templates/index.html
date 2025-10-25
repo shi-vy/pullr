@@ -14,7 +14,7 @@
 
   <table>
     <thead>
-      <tr><th>ID</th><th>Status</th></tr>
+      <tr><th>Queue</th><th>ID</th><th>Status</th></tr>
     </thead>
     <tbody id="torrentTable"></tbody>
   </table>
@@ -72,6 +72,7 @@
       WAITING_FOR_SELECTION: "gold",
       DOWNLOADING_FROM_REALDEBRID: "lightgreen",
       AVAILABLE_FROM_REALDEBRID: "lightblue",
+      WAITING_IN_QUEUE: "orange",
       TRANSFERRING_TO_MEDIA_SERVER: "violet",
       FINISHED: "lime",
       FAILED: "red"
@@ -84,9 +85,34 @@
 
     tableBody.innerHTML = "";
 
-    for (const [id, info] of Object.entries(torrents)) {
+    // Sort by queue position (active first, then by queue position)
+    const sortedEntries = Object.entries(torrents).sort((a, b) => {
+      const [idA, infoA] = a;
+      const [idB, infoB] = b;
+
+      // Active torrent always first
+      if (infoA.is_active && !infoB.is_active) return -1;
+      if (!infoA.is_active && infoB.is_active) return 1;
+
+      // Then by queue position
+      const queueA = infoA.queue_position || 999999;
+      const queueB = infoB.queue_position || 999999;
+      return queueA - queueB;
+    });
+
+    for (const [id, info] of sortedEntries) {
       const row = document.createElement("tr");
       const stateName = info.state.replace("TorrentState.", "");
+
+      // Queue position display
+      let queueDisplay = "";
+      if (info.is_active) {
+        queueDisplay = "▶️ Active";
+      } else if (info.queue_position) {
+        queueDisplay = `#${info.queue_position}`;
+      } else {
+        queueDisplay = "—";
+      }
 
       // Display files as separate lines if available
       let displayName = id;
@@ -110,7 +136,7 @@
           </button>`;
       }
 
-      row.innerHTML = `<td>${displayName}</td><td>${stateHTML}</td>`;
+      row.innerHTML = `<td>${queueDisplay}</td><td>${displayName}</td><td>${stateHTML}</td>`;
       tableBody.appendChild(row);
     }
   };

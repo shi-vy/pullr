@@ -102,7 +102,7 @@ class FileOps:
     # ------------------------------
     def _download_file(self, url: str, dest: Path, on_progress=None, max_retries: int = 3,
                        chunk_size: int = 1024 * 1024):
-        """Stream a file to disk with retries."""
+        """Stream a file to disk with retries and reduced logging."""
         for attempt in range(1, max_retries + 1):
             try:
                 with requests.get(url, stream=True, timeout=30) as r:
@@ -110,19 +110,26 @@ class FileOps:
                     total = int(r.headers.get("content-length", 0))
                     downloaded = 0
                     start_time = time.time()
+                    last_logged_percent = -20  # Start at -20 so 0% gets logged
 
                     with open(dest, "wb") as f:
                         for chunk in r.iter_content(chunk_size=chunk_size):
                             if chunk:
                                 f.write(chunk)
                                 downloaded += len(chunk)
+
                                 if total:
                                     pct = downloaded / total * 100
-                                    elapsed = time.time() - start_time
-                                    rate = downloaded / (elapsed + 1e-6) / (1024 * 1024)
-                                    self.logger.info(
-                                        f"{dest.name}: {pct:.1f}% ({downloaded / (1024 * 1024):.2f} MB) @ {rate:.2f} MB/s"
-                                    )
+
+                                    # Only log every 20% or at completion
+                                    if pct >= last_logged_percent + 20 or pct >= 100:
+                                        elapsed = time.time() - start_time
+                                        rate = downloaded / (elapsed + 1e-6) / (1024 * 1024)
+                                        self.logger.info(
+                                            f"{dest.name}: {pct:.1f}% ({downloaded / (1024 * 1024):.2f} MB) @ {rate:.2f} MB/s"
+                                        )
+                                        last_logged_percent = int(pct / 20) * 20
+
                                     if on_progress:
                                         on_progress(pct)
                     return  # success
