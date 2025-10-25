@@ -139,7 +139,7 @@ class TorrentManager:
         self.logger.info("Torrent polling loop stopped.")
 
     def _process_queue(self):
-        """Process the queue - activate next torrent if needed and update active torrent."""
+        """Process the queue - activate next torrent if needed and update all torrents up to AVAILABLE state."""
         with self.lock:
             # Check if we need to activate the next torrent
             if self.active_torrent_id is None and len(self.queue) > 0:
@@ -147,27 +147,19 @@ class TorrentManager:
                 self.logger.info(
                     f"Activating torrent {self.active_torrent_id} from queue (position 1 of {len(self.queue)})")
 
-            # If no active torrent, nothing to do
-            if self.active_torrent_id is None:
-                return
+            # Get all torrent IDs and their queue status
+            torrent_items = list(self.torrents.items())
 
-            # Get the active torrent
-            torrent = self.torrents.get(self.active_torrent_id)
-            if not torrent:
-                self.logger.warning(f"Active torrent {self.active_torrent_id} not found in torrents dict!")
-                self.active_torrent_id = None
-                return
+        # Update all torrents (outside of lock to avoid blocking)
+        for torrent_id, torrent in torrent_items:
+            is_active = (torrent_id == self.active_torrent_id)
+            try:
+                self._update_torrent(torrent_id, torrent, is_active)
+            except Exception as e:
+                self.logger.warning(f"Error updating torrent {torrent_id}: {e}")
 
-            torrent_id = self.active_torrent_id
-
-        # Update only the active torrent (outside of lock to avoid blocking)
-        try:
-            self._update_torrent(torrent_id, torrent)
-        except Exception as e:
-            self.logger.warning(f"Error updating active torrent {torrent_id}: {e}")
-
-    def _update_torrent(self, torrent_id: str, torrent: TorrentItem):
-        """Update a single torrent's state."""
+    def _update_torrent(self, torrent_id: str, torrent: TorrentItem, is_active: bool):
+        """Update a single torrent's state. Only active torrents can proceed to downloading."""
         now = int(time.time())
 
         # Skip updates for finished or failed torrents
@@ -179,7 +171,7 @@ class TorrentManager:
             info = self.rd.get_torrent_info(torrent_id)
             rd_status = info.get("status", "").lower()
 
-            self.logger.debug(f"{torrent_id}: RD status -> {rd_status}")
+            self.logger.debug(f"{torrent_id}: RD status -> {rd_status} (active={is_active})")
 
             # --- waiting / converting / queued states ---
             if rd_status == "waiting_files_selection":
@@ -219,12 +211,13 @@ class TorrentManager:
                         else:
                             self._attempt_unrestrict(torrent_id, torrent, links)
 
-                    # If available, trigger FileOps once
-                    if (torrent.state == TorrentState.AVAILABLE_FROM_REALDEBRID
+                    # CRITICAL: Only trigger FileOps if this torrent is ACTIVE
+                    if (is_active
+                            and torrent.state == TorrentState.AVAILABLE_FROM_REALDEBRID
                             and torrent.direct_links
                             and not torrent._download_started):
                         torrent._download_started = True
-                        self.logger.info(f"Triggering FileOps for torrent {torrent.id}...")
+                        self.logger.info(f"Triggering FileOps for ACTIVE torrent {torrent.id}...")
                         self.fileops.start_download(
                             torrent,
                             config=self.config_data,
@@ -232,6 +225,10 @@ class TorrentManager:
                             on_progress=self.on_download_progress,
                             on_transfer=lambda tid=torrent.id: self.on_transfer_complete(tid)
                         )
+                    elif not is_active and torrent.direct_links:
+                        # Torrent is ready but waiting in queue
+                        torrent.state = TorrentState.WAITING_IN_QUEUE
+                        self.logger.debug(f"{torrent_id}: Ready but waiting in queue (not active)")
 
             elif rd_status == "error":
                 torrent.state = TorrentState.FAILED
