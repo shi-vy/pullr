@@ -5,8 +5,10 @@ from utils.logger import setup_logger
 
 API_BASE = "https://api.real-debrid.com/rest/1.0"
 
+
 class RealDebridError(Exception):
     pass
+
 
 class RealDebridClient:
     def __init__(self, api_token: str, logger=None):
@@ -92,10 +94,13 @@ class RealDebridClient:
         return self._request("POST", f"/torrents/selectFiles/{torrent_id}", data={"files": files})
 
     def delete_torrent(self, torrent_id: str) -> dict:
-        """Delete a torrent from RealDebrid once it’s done."""
+        """Delete a torrent from RealDebrid once it's done."""
         return self._request("DELETE", f"/torrents/delete/{torrent_id}")
 
     def delete_download(self, download_id: str) -> dict:
         """Delete a download from RealDebrid account."""
         return self._request("DELETE", f"/downloads/delete/{download_id}")
 
+    def list_torrents(self) -> list:
+        """Get list of all torrents in RealDebrid account."""
+        return self._request("GET", "/torrents")

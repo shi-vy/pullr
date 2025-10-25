@@ -12,11 +12,20 @@
     <button type="submit">Add</button>
   </form>
 
+  <h2>📥 Manual Downloads</h2>
   <table>
     <thead>
       <tr><th>Queue</th><th>ID</th><th>Status</th></tr>
     </thead>
-    <tbody id="torrentTable"></tbody>
+    <tbody id="manualTorrentTable"></tbody>
+  </table>
+
+  <h2>🔄 Auto-Detected Downloads</h2>
+  <table>
+    <thead>
+      <tr><th>Queue</th><th>Name</th><th>Status</th></tr>
+    </thead>
+    <tbody id="externalTorrentTable"></tbody>
   </table>
 
   <div id="fileModal" class="modal" style="display:none;">
@@ -67,7 +76,8 @@
   });
 
   // --- live updates via websocket ---
-  const tableBody = document.getElementById('torrentTable');
+  const manualTableBody = document.getElementById('manualTorrentTable');
+  const externalTableBody = document.getElementById('externalTorrentTable');
   const colorMap = {
       WAITING_FOR_SELECTION: "gold",
       DOWNLOADING_FROM_REALDEBRID: "lightgreen",
@@ -80,9 +90,21 @@
   const ws = new WebSocket("ws://" + window.location.host + "/ws");
 
   ws.onmessage = (event) => {
-    const torrents = JSON.parse(event.data);
-    console.log("Received update:", torrents);
+    const data = JSON.parse(event.data);
+    console.log("Received update:", data);
 
+    // Handle both old format (direct torrents object) and new format (manual/external)
+    const manualTorrents = data.manual || {};
+    const externalTorrents = data.external || {};
+
+    // Populate manual torrents table
+    populateTable(manualTableBody, manualTorrents, false);
+
+    // Populate external torrents table
+    populateTable(externalTableBody, externalTorrents, true);
+  };
+
+  function populateTable(tableBody, torrents, isExternal) {
     tableBody.innerHTML = "";
 
     // Sort by queue position (active first, then by queue position)
@@ -114,8 +136,8 @@
         queueDisplay = "—";
       }
 
-      // Display files as separate lines if available
-      let displayName = id;
+      // Display name or files
+      let displayName = isExternal ? info.name : id;
       if (info.selected_files && info.selected_files.length > 0) {
         displayName = info.selected_files.join('<br>');
       }
@@ -128,8 +150,13 @@
 
       let stateHTML = `<span style="color:${colorMap[stateName] || "white"}">${stateName}${progressDisplay}</span>`;
 
-      // Render file selection UI if waiting for selection
-      if (stateName === "WAITING_FOR_SELECTION" && info.files && info.files.length > 0) {
+      // Show error message if present
+      if (info.error_message) {
+        stateHTML += `<br><span style="color:red; font-size:0.9em;">⚠️ ${info.error_message}</span>`;
+      }
+
+      // Render file selection UI if waiting for selection (manual torrents only)
+      if (!isExternal && stateName === "WAITING_FOR_SELECTION" && info.files && info.files.length > 0) {
         stateHTML += `
           <button onclick="openFileModal('${id}', ${JSON.stringify(info.files).replace(/"/g, "&quot;")})">
             Select Files
@@ -139,7 +166,14 @@
       row.innerHTML = `<td>${queueDisplay}</td><td>${displayName}</td><td>${stateHTML}</td>`;
       tableBody.appendChild(row);
     }
-  };
+
+    // Show "No torrents" message if table is empty
+    if (sortedEntries.length === 0) {
+      const row = document.createElement("tr");
+      row.innerHTML = `<td colspan="3" style="text-align:center; color:#666; font-style:italic;">No torrents yet</td>`;
+      tableBody.appendChild(row);
+    }
+  }
 
   ws.onclose = () => {
     console.log("WebSocket closed. Reconnecting...");
