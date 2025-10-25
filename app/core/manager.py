@@ -3,6 +3,7 @@ import time
 import random
 from typing import Dict, Optional
 from collections import deque
+from datetime import datetime
 
 from core.states import TorrentState
 from core.realdebrid import RealDebridClient, RealDebridError
@@ -12,10 +13,11 @@ from core.fileops import FileOps
 class TorrentItem:
     """Represents one torrent in the queue."""
 
-    def __init__(self, magnet_link: str):
+    def __init__(self, magnet_link: str, source: str = "manual"):
         self.magnet = magnet_link
         self.id = None
         self.name = None
+        self.source = source  # "manual" or "external"
         self.state = TorrentState.SENT_TO_REALDEBRID
         self.last_update = time.time()
         self.direct_links = []
@@ -28,6 +30,8 @@ class TorrentItem:
         self._download_started = False
         self.selected_files = []
         self.custom_folder_name = None
+        self.error_message = None  # Store error details
+        self.deleted_from_realdebrid = False  # Track if deleted from RD
 
     def schedule_unrestrict_retry(self):
         # exponential backoff with jitter, cap at 10 min
@@ -36,7 +40,7 @@ class TorrentItem:
         self.next_unrestrict_at = int(time.time()) + self.unrestrict_backoff + jitter
 
     def __repr__(self):
-        return f"<TorrentItem id={self.id} state={self.state}>"
+        return f"<TorrentItem id={self.id} source={self.source} state={self.state}>"
 
 
 class TorrentManager:
@@ -55,6 +59,21 @@ class TorrentManager:
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
+
+        # External torrent scanning
+        self.known_torrent_ids: set = set()
+        self.app_start_time = time.time()
+        self.external_scan_interval = config_data.get("external_torrent_scan_interval_seconds", 15)
+        if self.external_scan_interval is None:
+            self.external_scan_interval = 0
+        self.external_scan_interval = int(self.external_scan_interval) if self.external_scan_interval > 0 else 0
+        self.external_scan_enabled = self.external_scan_interval > 0
+        self.last_external_scan = 0
+
+        if self.external_scan_enabled:
+            self.logger.info(f"External torrent scanning enabled (interval: {self.external_scan_interval}s)")
+        else:
+            self.logger.info("External torrent scanning disabled")
 
     # ------------------------------
     # Public Methods
@@ -89,12 +108,13 @@ class TorrentManager:
             torrent_id = result.get("id")
             if not torrent_id:
                 raise RealDebridError("No torrent ID returned from RealDebrid.")
-            item = TorrentItem(magnet_link)
+            item = TorrentItem(magnet_link, source="manual")
             item.id = torrent_id
             item.state = TorrentState.WAITING_FOR_REALDEBRID
             with self.lock:
                 self.torrents[torrent_id] = item
                 self.queue.append(torrent_id)
+                self.known_torrent_ids.add(torrent_id)
                 queue_position = len(self.queue)
             self.logger.info(f"Added torrent {torrent_id} to queue at position {queue_position}.")
             return torrent_id
@@ -103,9 +123,11 @@ class TorrentManager:
             return None
 
     def get_status(self):
-        """Return a snapshot of current torrent states with queue information."""
+        """Return a snapshot of current torrent states with queue information, separated by source."""
         with self.lock:
-            status = {}
+            manual_torrents = {}
+            external_torrents = {}
+
             for tid, t in self.torrents.items():
                 # Calculate queue position
                 queue_position = None
@@ -114,16 +136,27 @@ class TorrentManager:
 
                 is_active = (tid == self.active_torrent_id)
 
-                status[tid] = {
+                torrent_data = {
                     "state": str(t.state),
                     "progress": t.progress,
+                    "name": t.name or tid,
                     "files": getattr(t, "files", []),
                     "selected_files": t.selected_files if t.selected_files else [],
                     "custom_folder_name": getattr(t, "custom_folder_name", None),
                     "queue_position": queue_position,
-                    "is_active": is_active
+                    "is_active": is_active,
+                    "error_message": t.error_message
                 }
-            return status
+
+                if t.source == "external":
+                    external_torrents[tid] = torrent_data
+                else:
+                    manual_torrents[tid] = torrent_data
+
+            return {
+                "manual": manual_torrents,
+                "external": external_torrents
+            }
 
     # ------------------------------
     # Internal Polling Loop
@@ -133,6 +166,14 @@ class TorrentManager:
         while not self.stop_event.is_set():
             try:
                 self._process_queue()
+
+                # Scan for external torrents if enabled and interval elapsed
+                if self.external_scan_enabled:
+                    now = time.time()
+                    if now - self.last_external_scan >= self.external_scan_interval:
+                        self._scan_external_torrents()
+                        self.last_external_scan = now
+
             except Exception as e:
                 self.logger.warning(f"Polling loop error: {e}")
             time.sleep(self.poll_interval)
@@ -180,6 +221,11 @@ class TorrentManager:
             self.logger.debug(f"{torrent_id}: Skipping update (state={torrent.state})")
             return
 
+        # Skip updates if torrent was deleted from RealDebrid
+        if torrent.deleted_from_realdebrid:
+            self.logger.debug(f"{torrent_id}: Skipping update (deleted from RealDebrid)")
+            return
+
         try:
             info = self.rd.get_torrent_info(torrent_id)
             rd_status = info.get("status", "").lower()
@@ -188,32 +234,38 @@ class TorrentManager:
 
             # --- waiting / converting / queued states ---
             if rd_status == "waiting_files_selection":
-                try:
-                    files_info = self.rd.list_torrent_files(torrent_id)
-                    torrent.files = [
-                        {
-                            "id": f["id"],
-                            "name": f["path"].split("/")[-1],
-                            "bytes": f["bytes"]
-                        }
-                        for f in files_info.get("files", [])
-                    ]
-                    torrent.state = TorrentState.WAITING_FOR_SELECTION
-                    self.logger.info(
-                        f"{torrent_id}: waiting for file selection ({len(torrent.files)} file(s) found).")
-                except RealDebridError as e:
-                    self.logger.warning(f"Failed to list files for {torrent_id}: {e}")
+                # Skip for external torrents (they should have files auto-selected already)
+                if torrent.source == "external":
                     torrent.state = TorrentState.WAITING_FOR_REALDEBRID
+                else:
+                    try:
+                        files_info = self.rd.list_torrent_files(torrent_id)
+                        torrent.files = [
+                            {
+                                "id": f["id"],
+                                "name": f["path"].split("/")[-1],
+                                "bytes": f["bytes"]
+                            }
+                            for f in files_info.get("files", [])
+                        ]
+                        torrent.state = TorrentState.WAITING_FOR_SELECTION
+                        self.logger.info(
+                            f"{torrent_id}: waiting for file selection ({len(torrent.files)} file(s) found).")
+                    except RealDebridError as e:
+                        self.logger.warning(f"Failed to list files for {torrent_id}: {e}")
+                        torrent.state = TorrentState.WAITING_FOR_REALDEBRID
 
             elif rd_status == "magnet_error":
                 # Invalid magnet link - mark as failed immediately
                 torrent.state = TorrentState.FAILED
+                torrent.error_message = "Invalid magnet link"
                 self.logger.error(f"Torrent {torrent_id} failed: Invalid magnet link (magnet_error from RealDebrid)")
                 # This will trigger removal from queue on next cycle
 
             elif rd_status in ["virus", "dead"]:
                 # Torrent contains virus or is dead - mark as failed
                 torrent.state = TorrentState.FAILED
+                torrent.error_message = f"RealDebrid status: {rd_status}"
                 self.logger.error(f"Torrent {torrent_id} failed: RealDebrid reported status '{rd_status}'")
 
             elif rd_status in ["magnet_conversion", "magnet_converting", "queued", "downloading"]:
@@ -256,6 +308,7 @@ class TorrentManager:
 
             elif rd_status == "error":
                 torrent.state = TorrentState.FAILED
+                torrent.error_message = "RealDebrid error status"
                 self.logger.error(f"Torrent {torrent_id} failed with error status from RealDebrid")
 
             else:
@@ -265,7 +318,104 @@ class TorrentManager:
             torrent.last_update = time.time()
 
         except RealDebridError as e:
-            self.logger.warning(f"Error updating torrent {torrent_id}: {e}")
+            # Check if it's a 404 error (torrent deleted)
+            if "404" in str(e):
+                self.logger.debug(
+                    f"Torrent {torrent_id} not found in RealDebrid (likely deleted), skipping further updates")
+                torrent.deleted_from_realdebrid = True
+            else:
+                self.logger.warning(f"Error updating torrent {torrent_id}: {e}")
+
+    # ------------------------------
+    # External Torrent Scanning
+    # ------------------------------
+    def _scan_external_torrents(self):
+        """Scan RealDebrid for externally-added torrents and auto-select files."""
+        try:
+            self.logger.debug("Scanning for external torrents...")
+            torrents = self.rd.list_torrents()
+
+            if not isinstance(torrents, list):
+                self.logger.warning(f"Unexpected response from list_torrents: {type(torrents)}")
+                return
+
+            new_count = 0
+            for t in torrents:
+                torrent_id = t.get("id")
+                if not torrent_id:
+                    continue
+
+                # Skip if already known
+                if torrent_id in self.known_torrent_ids:
+                    continue
+
+                # Parse added timestamp
+                added_str = t.get("added")
+                if not added_str:
+                    continue
+
+                try:
+                    # Parse ISO format: "2025-10-25T05:00:51.000Z"
+                    added_dt = datetime.fromisoformat(added_str.replace('Z', '+00:00'))
+                    added_ts = added_dt.timestamp()
+                except Exception as e:
+                    self.logger.debug(f"Failed to parse timestamp '{added_str}': {e}")
+                    continue
+
+                # Skip if added before Pullr started
+                if added_ts < self.app_start_time:
+                    self.known_torrent_ids.add(torrent_id)
+                    continue
+
+                # Process torrents in either waiting_files_selection OR already downloaded status
+                status = t.get("status", "").lower()
+                if status not in ["waiting_files_selection", "downloaded"]:
+                    continue
+
+                # Found a new external torrent!
+                filename = t.get("filename", torrent_id)
+                self.logger.info(f"Detected external torrent: {filename} ({torrent_id}) [status: {status}]")
+
+                try:
+                    # Auto-select all files (only needed if waiting for selection)
+                    if status == "waiting_files_selection":
+                        self.rd.select_files(torrent_id, "all")
+                        self.logger.info(f"Auto-selected all files for external torrent {torrent_id}")
+                    else:
+                        self.logger.info(f"External torrent {torrent_id} already downloaded, skipping file selection")
+
+                    # Create TorrentItem
+                    item = TorrentItem(magnet_link="", source="external")
+                    item.id = torrent_id
+                    item.name = filename
+                    item.custom_folder_name = filename  # Use RD's filename as folder name
+                    item.state = TorrentState.WAITING_FOR_REALDEBRID
+
+                    with self.lock:
+                        self.torrents[torrent_id] = item
+                        self.queue.append(torrent_id)
+                        self.known_torrent_ids.add(torrent_id)
+
+                    new_count += 1
+
+                except RealDebridError as e:
+                    self.logger.warning(f"Failed to process external torrent {torrent_id}: {e}")
+                    # Still mark as known to avoid retry loops, but show as failed
+                    item = TorrentItem(magnet_link="", source="external")
+                    item.id = torrent_id
+                    item.name = filename
+                    item.state = TorrentState.FAILED
+                    item.error_message = f"Processing failed: {str(e)}"
+
+                    with self.lock:
+                        self.torrents[torrent_id] = item
+                        self.known_torrent_ids.add(torrent_id)
+
+            if new_count > 0:
+                self.logger.info(f"External torrent scan completed: {new_count} new torrent(s) added")
+
+        except Exception as e:
+            self.logger.warning(f"External torrent scan error: {e}")
 
     # ------------------------------
     # Helpers
@@ -328,6 +478,10 @@ class TorrentManager:
             try:
                 self.rd.delete_torrent(torrent_id)
                 self.logger.info(f"Deleted torrent {torrent_id} from RealDebrid.")
+                # Mark as deleted so we stop trying to poll it
+                with self.lock:
+                    if torrent_id in self.torrents:
+                        self.torrents[torrent_id].deleted_from_realdebrid = True
             except Exception as e:
                 self.logger.warning(f"Failed to delete torrent {torrent_id}: {e}")
 
