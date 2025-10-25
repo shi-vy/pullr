@@ -147,6 +147,19 @@ class TorrentManager:
                 self.logger.info(
                     f"Activating torrent {self.active_torrent_id} from queue (position 1 of {len(self.queue)})")
 
+            # Clean up failed torrents from queue
+            failed_torrents = [
+                tid for tid, t in self.torrents.items()
+                if t.state == TorrentState.FAILED and tid in self.queue
+            ]
+            for tid in failed_torrents:
+                self.queue.remove(tid)
+                self.logger.info(f"Removed failed torrent {tid} from queue. {len(self.queue)} remaining.")
+                # If it was active, clear it
+                if self.active_torrent_id == tid:
+                    self.active_torrent_id = None
+                    self.logger.info("Cleared active torrent (was failed), next will activate on next cycle.")
+
             # Get all torrent IDs and their queue status
             torrent_items = list(self.torrents.items())
 
@@ -191,6 +204,17 @@ class TorrentManager:
                 except RealDebridError as e:
                     self.logger.warning(f"Failed to list files for {torrent_id}: {e}")
                     torrent.state = TorrentState.WAITING_FOR_REALDEBRID
+
+            elif rd_status == "magnet_error":
+                # Invalid magnet link - mark as failed immediately
+                torrent.state = TorrentState.FAILED
+                self.logger.error(f"Torrent {torrent_id} failed: Invalid magnet link (magnet_error from RealDebrid)")
+                # This will trigger removal from queue on next cycle
+
+            elif rd_status in ["virus", "dead"]:
+                # Torrent contains virus or is dead - mark as failed
+                torrent.state = TorrentState.FAILED
+                self.logger.error(f"Torrent {torrent_id} failed: RealDebrid reported status '{rd_status}'")
 
             elif rd_status in ["magnet_conversion", "magnet_converting", "queued", "downloading"]:
                 torrent.state = TorrentState.WAITING_FOR_REALDEBRID
