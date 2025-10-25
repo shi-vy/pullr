@@ -7,12 +7,15 @@ DEFAULT_PATHS = [
     Path(__file__).parent.parent.parent / "config" / "config.yaml",
 ]
 
+
 def running_in_docker() -> bool:
     """Detect if running inside a Docker container."""
     return Path("/.dockerenv").exists()
 
+
 class ConfigError(Exception):
     pass
+
 
 class Config:
     def __init__(self, path: Path | None = None):
@@ -48,6 +51,11 @@ class Config:
         missing = [key for key in required if key not in self.data]
         if missing:
             raise ConfigError(f"Missing required config keys: {', '.join(missing)}")
+
+        # Validate external_torrent_scan_interval_seconds if present
+        scan_interval = self.data.get("external_torrent_scan_interval_seconds")
+        if scan_interval is not None and not isinstance(scan_interval, (int, float)):
+            raise ConfigError("external_torrent_scan_interval_seconds must be a number")
 
     def _prepare_directories(self):
         temp_path = Path(self.data["download_temp_path"])
@@ -110,6 +118,14 @@ class Config:
     @property
     def log_to_file(self) -> bool:
         return bool(self.data.get("log_to_file", True))
+
+    @property
+    def external_torrent_scan_interval_seconds(self) -> int:
+        """Get external torrent scan interval. Returns 0 if disabled."""
+        interval = self.data.get("external_torrent_scan_interval_seconds", 15)
+        if interval is None:
+            return 0
+        return int(interval) if interval > 0 else 0
 
     def __repr__(self):
         return f"<Config path={self.path} keys={list(self.data.keys())}>"

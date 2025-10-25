@@ -355,19 +355,22 @@ class TorrentManager:
                     self.known_torrent_ids.add(torrent_id)
                     continue
 
-                # Only process torrents waiting for file selection
+                # Process torrents in either waiting_files_selection OR already downloaded status
                 status = t.get("status", "").lower()
-                if status != "waiting_files_selection":
+                if status not in ["waiting_files_selection", "downloaded"]:
                     continue
 
                 # Found a new external torrent!
                 filename = t.get("filename", torrent_id)
-                self.logger.info(f"Detected external torrent: {filename} ({torrent_id})")
+                self.logger.info(f"Detected external torrent: {filename} ({torrent_id}) [status: {status}]")
 
                 try:
-                    # Auto-select all files
-                    self.rd.select_files(torrent_id, "all")
-                    self.logger.info(f"Auto-selected all files for external torrent {torrent_id}")
+                    # Auto-select all files (only needed if waiting for selection)
+                    if status == "waiting_files_selection":
+                        self.rd.select_files(torrent_id, "all")
+                        self.logger.info(f"Auto-selected all files for external torrent {torrent_id}")
+                    else:
+                        self.logger.info(f"External torrent {torrent_id} already downloaded, skipping file selection")
 
                     # Create TorrentItem
                     item = TorrentItem(magnet_link="", source="external")
@@ -384,13 +387,13 @@ class TorrentManager:
                     new_count += 1
 
                 except RealDebridError as e:
-                    self.logger.warning(f"Failed to auto-select files for {torrent_id}: {e}")
+                    self.logger.warning(f"Failed to process external torrent {torrent_id}: {e}")
                     # Still mark as known to avoid retry loops, but show as failed
                     item = TorrentItem(magnet_link="", source="external")
                     item.id = torrent_id
                     item.name = filename
                     item.state = TorrentState.FAILED
-                    item.error_message = f"Auto-selection failed: {str(e)}"
+                    item.error_message = f"Processing failed: {str(e)}"
 
                     with self.lock:
                         self.torrents[torrent_id] = item
@@ -488,6 +491,11 @@ class TorrentManager:
             if self.active_torrent_id == torrent_id:
                 self.active_torrent_id = None
                 self.logger.info("Cleared active torrent, next torrent will be activated in next poll cycle.")
+
+            # CRITICAL FIX: Remove torrent from torrents dict to stop polling it
+            if torrent_id in self.torrents:
+                del self.torrents[torrent_id]
+                self.logger.info(f"Removed torrent {torrent_id} from torrents dict (no longer tracked)")
 
     def on_download_progress(self, torrent_id: str, progress: float):
         with self.lock:
