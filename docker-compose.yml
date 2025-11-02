@@ -6,8 +6,11 @@ services:
       args:
         BRANCH: ${BRANCH:-main}
         COMMIT: ${COMMIT:-unknown}
+        MEDIA_UID: ${MEDIA_UID:-1000}
+        MEDIA_GID: ${MEDIA_GID:-1000}
     image: pullr:${BRANCH:-main}
     container_name: pullr_${BRANCH:-main}
+    user: "${MEDIA_UID:-1000}:${MEDIA_GID:-1000}"
     environment:
       - TZ=Australia/Brisbane
       - BRANCH=${BRANCH:-main}
