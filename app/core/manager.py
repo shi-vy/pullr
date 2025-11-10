@@ -265,8 +265,11 @@ class TorrentManager:
         """Update a single torrent's state. Only active torrents can proceed to downloading."""
         now = int(time.time())
 
-        # Skip updates for finished or failed torrents
-        if torrent.state in (TorrentState.FINISHED, TorrentState.FAILED):
+        # Skip updates for finished, failed, downloading, or transferring torrents
+        # These states are terminal or managed by FileOps
+        if torrent.state in (TorrentState.FINISHED, TorrentState.FAILED,
+                            TorrentState.DOWNLOADING_FROM_REALDEBRID,
+                            TorrentState.TRANSFERRING_TO_MEDIA_SERVER):
             self.logger.debug(f"{torrent_id}: Skipping update (state={torrent.state})")
             return
 
