@@ -121,40 +121,43 @@ class TorrentManager:
 
     def get_status(self):
         """Return a snapshot of current torrent states with queue information, separated by source."""
+        manual_torrents = {}
+        external_torrents = {}
+
         with self.lock:
-            manual_torrents = {}
-            external_torrents = {}
+            torrent_items = list(self.torrents.items())
 
-            for tid, t in self.torrents.items():
-                # Get queue position from service
-                queue_position = self.queue_service.get_queue_position(tid)
-                is_active = self.queue_service.is_active(tid)
+        # Process torrents outside the lock to avoid deadlock with service methods
+        for tid, t in torrent_items:
+            # Get queue position from service (uses its own lock)
+            queue_position = self.queue_service.get_queue_position(tid)
+            is_active = self.queue_service.is_active(tid)
 
-                # Get deletion info from service
-                deletion_info = self.deletion_service.get_deletion_time_remaining(tid)
+            # Get deletion info from service (uses its own lock)
+            deletion_info = self.deletion_service.get_deletion_time_remaining(tid)
 
-                torrent_data = {
-                    "state": str(t.state),
-                    "progress": t.progress,
-                    "name": t.name or tid,
-                    "files": getattr(t, "files", []),
-                    "selected_files": t.selected_files if t.selected_files else [],
-                    "custom_folder_name": getattr(t, "custom_folder_name", None),
-                    "queue_position": queue_position,
-                    "is_active": is_active,
-                    "error_message": t.error_message,
-                    "deletion_in": deletion_info
-                }
-
-                if t.source == "external":
-                    external_torrents[tid] = torrent_data
-                else:
-                    manual_torrents[tid] = torrent_data
-
-            return {
-                "manual": manual_torrents,
-                "external": external_torrents
+            torrent_data = {
+                "state": str(t.state),
+                "progress": t.progress,
+                "name": t.name or tid,
+                "files": getattr(t, "files", []),
+                "selected_files": t.selected_files if t.selected_files else [],
+                "custom_folder_name": getattr(t, "custom_folder_name", None),
+                "queue_position": queue_position,
+                "is_active": is_active,
+                "error_message": t.error_message,
+                "deletion_in": deletion_info
             }
+
+            if t.source == "external":
+                external_torrents[tid] = torrent_data
+            else:
+                manual_torrents[tid] = torrent_data
+
+        return {
+            "manual": manual_torrents,
+            "external": external_torrents
+        }
 
     # ------------------------------
     # Internal Polling Loop
