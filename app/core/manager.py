@@ -68,7 +68,8 @@ class TorrentManager:
             self.lock,
             logger,
             config_data,
-            time.time()  # app_start_time
+            time.time(),  # app_start_time
+            self.queue_service  # Pass queue service so external torrents can be added to queue
         )
 
     # ------------------------------
@@ -169,15 +170,7 @@ class TorrentManager:
 
                 # Scan for external torrents via service
                 if self.external_service.should_scan():
-                    new_count = self.external_service.scan_for_external_torrents()
-                    # Add newly detected external torrents to queue
-                    if new_count > 0:
-                        with self.lock:
-                            # Find torrents that were just added by external service
-                            for tid, t in self.torrents.items():
-                                if (t.source == "external" and
-                                        self.queue_service.get_queue_position(tid) is None):
-                                    self.queue_service.add_to_queue(tid)
+                    self.external_service.scan_for_external_torrents()
 
             except Exception as e:
                 self.logger.warning(f"Polling loop error: {e}")

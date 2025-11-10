@@ -24,7 +24,8 @@ class ExternalTorrentService:
             lock: threading.Lock,
             logger,
             config_data: dict,
-            app_start_time: float
+            app_start_time: float,
+            queue_service=None
     ):
         """
         Initialize the external torrent service.
@@ -36,6 +37,7 @@ class ExternalTorrentService:
             logger: Logger instance
             config_data: Configuration dict with scan settings
             app_start_time: Timestamp when Pullr started (to filter old torrents)
+            queue_service: Optional QueueService instance for adding torrents to queue
         """
         self.rd = rd_client
         self.torrents = torrents
@@ -43,6 +45,7 @@ class ExternalTorrentService:
         self.logger = logger
         self.config_data = config_data
         self.app_start_time = app_start_time
+        self.queue_service = queue_service
 
         self.known_torrent_ids: Set[str] = set()
         self.last_scan_time: float = 0
@@ -209,6 +212,10 @@ class ExternalTorrentService:
             with self.lock:
                 self.torrents[torrent_id] = item
                 self.known_torrent_ids.add(torrent_id)
+
+            # Add to queue if queue service is available
+            if self.queue_service:
+                self.queue_service.add_to_queue(torrent_id)
 
             self.logger.info(f"Successfully imported external torrent {torrent_id}")
             return True
