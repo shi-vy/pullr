@@ -110,9 +110,9 @@ class TorrentManager:
             item.state = TorrentState.WAITING_FOR_REALDEBRID
             with self.lock:
                 self.torrents[torrent_id] = item
-                self.external_service.mark_as_known(torrent_id)
 
-            # Add to queue via service
+            # Mark as known and add to queue (both use their own locks)
+            self.external_service.mark_as_known(torrent_id)
             queue_position = self.queue_service.add_to_queue(torrent_id)
             return torrent_id
         except RealDebridError as e:
