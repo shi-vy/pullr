@@ -239,9 +239,16 @@ class TorrentManager:
                             }
                             for f in files_info.get("files", [])
                         ]
-                        torrent.state = TorrentState.WAITING_FOR_SELECTION
-                        self.logger.info(
-                            f"{torrent_id}: waiting for file selection ({len(torrent.files)} file(s) found).")
+
+                        # Try automatic file selection
+                        auto_selected = self._try_auto_select_files(torrent_id, torrent)
+
+                        if not auto_selected:
+                            # Manual selection required
+                            torrent.state = TorrentState.WAITING_FOR_SELECTION
+                            self.logger.info(
+                                f"{torrent_id}: waiting for file selection ({len(torrent.files)} file(s) found).")
+
                     except RealDebridError as e:
                         self.logger.warning(f"Failed to list files for {torrent_id}: {e}")
                         torrent.state = TorrentState.WAITING_FOR_REALDEBRID
@@ -320,6 +327,81 @@ class TorrentManager:
     # ------------------------------
     # Helpers
     # ------------------------------
+    def _try_auto_select_files(self, torrent_id: str, torrent: TorrentItem) -> bool:
+        """
+        Attempt automatic file selection for a torrent.
+
+        Rules:
+        1. If only one file total → auto-select it
+        2. If multiple files but only one media file (.mkv/.mp4) → auto-select that media file
+
+        Args:
+            torrent_id: ID of the torrent
+            torrent: TorrentItem instance
+
+        Returns:
+            True if automatic selection was made, False if manual selection required
+        """
+        files = torrent.files
+
+        if not files:
+            return False
+
+        # Rule 1: Single file - auto-select
+        if len(files) == 1:
+            file_id = files[0]["id"]
+            file_name = files[0]["name"]
+
+            try:
+                self.rd.select_torrent_files(torrent_id, [file_id])
+                torrent.selected_files = [file_name]
+                torrent.custom_folder_name = None  # Single file, no folder needed
+                torrent.state = TorrentState.WAITING_FOR_REALDEBRID
+
+                self.logger.info(
+                    f"{torrent_id}: Auto-selected single file '{file_name}'"
+                )
+                return True
+
+            except RealDebridError as e:
+                self.logger.warning(f"Failed to auto-select single file for {torrent_id}: {e}")
+                return False
+
+        # Rule 2: Multiple files, but only one media file
+        media_extensions = {'.mkv', '.mp4'}
+        media_files = [
+            f for f in files
+            if any(f["name"].lower().endswith(ext) for ext in media_extensions)
+        ]
+
+        if len(media_files) == 1:
+            media_file = media_files[0]
+            file_id = media_file["id"]
+            file_name = media_file["name"]
+
+            try:
+                self.rd.select_torrent_files(torrent_id, [file_id])
+                torrent.selected_files = [file_name]
+                torrent.custom_folder_name = None  # Single file, no folder needed
+                torrent.state = TorrentState.WAITING_FOR_REALDEBRID
+
+                self.logger.info(
+                    f"{torrent_id}: Auto-selected single media file '{file_name}' "
+                    f"from {len(files)} total files"
+                )
+                return True
+
+            except RealDebridError as e:
+                self.logger.warning(f"Failed to auto-select media file for {torrent_id}: {e}")
+                return False
+
+        # Multiple files and either zero or multiple media files - manual selection required
+        self.logger.info(
+            f"{torrent_id}: Manual selection required "
+            f"({len(files)} files, {len(media_files)} media files)"
+        )
+        return False
+
     def _attempt_unrestrict(self, torrent_id: str, torrent: TorrentItem, links: list[str]):
         """Try to unrestrict RD links into direct download URLs, with logging/backoff."""
         self.logger.info(f"Generating direct links for torrent {torrent_id}...")
