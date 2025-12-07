@@ -30,6 +30,7 @@ class TorrentItem:
         self._download_started = False
         self.selected_files = []
         self.custom_folder_name = None
+        self.filename_strip_pattern = None  # Pattern to strip from start of filenames
         self.error_message = None  # Store error details
         self.deleted_from_realdebrid = False  # Track if deleted from RD
         self.completion_time = None  # Track when the torrent finished
