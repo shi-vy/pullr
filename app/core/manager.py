@@ -13,11 +13,12 @@ from core.services import QueueService, DeletionService, ExternalTorrentService
 class TorrentItem:
     """Represents one torrent in the queue."""
 
-    def __init__(self, magnet_link: str, source: str = "manual"):
+    def __init__(self, magnet_link: str, source: str = "manual", quick_download: bool = True):
         self.magnet = magnet_link
         self.id = None
         self.name = None
         self.source = source  # "manual" or "external"
+        self.quick_download = quick_download  # Enable/disable automatic file selection
         self.state = TorrentState.SENT_TO_REALDEBRID
         self.last_update = time.time()
         self.direct_links = []
@@ -42,7 +43,7 @@ class TorrentItem:
         self.next_unrestrict_at = int(time.time()) + self.unrestrict_backoff + jitter
 
     def __repr__(self):
-        return f"<TorrentItem id={self.id} source={self.source} state={self.state}>"
+        return f"<TorrentItem id={self.id} source={self.source} state={self.state} quick_download={self.quick_download}>"
 
 
 class TorrentManager:
@@ -98,15 +99,15 @@ class TorrentManager:
             self.thread.join(timeout=5)
             self.logger.info("Torrent polling loop stopped.")
 
-    def add_magnet(self, magnet_link: str):
+    def add_magnet(self, magnet_link: str, quick_download: bool = True):
         """Add a new magnet link to RealDebrid and queue."""
         try:
-            self.logger.info(f"Adding magnet link: {magnet_link[:60]}...")
+            self.logger.info(f"Adding magnet link: {magnet_link[:60]}... (quick_download={quick_download})")
             result = self.rd.add_magnet(magnet_link)
             torrent_id = result.get("id")
             if not torrent_id:
                 raise RealDebridError("No torrent ID returned from RealDebrid.")
-            item = TorrentItem(magnet_link, source="manual")
+            item = TorrentItem(magnet_link, source="manual", quick_download=quick_download)
             item.id = torrent_id
             item.state = TorrentState.WAITING_FOR_REALDEBRID
             with self.lock:
@@ -241,14 +242,21 @@ class TorrentManager:
                             for f in files_info.get("files", [])
                         ]
 
-                        # Try automatic file selection
-                        auto_selected = self._try_auto_select_files(torrent_id, torrent)
+                        # Try automatic file selection ONLY if quick_download is enabled
+                        auto_selected = False
+                        if torrent.quick_download:
+                            auto_selected = self._try_auto_select_files(torrent_id, torrent)
 
                         if not auto_selected:
                             # Manual selection required
                             torrent.state = TorrentState.WAITING_FOR_SELECTION
-                            self.logger.info(
-                                f"{torrent_id}: waiting for file selection ({len(torrent.files)} file(s) found).")
+                            if torrent.quick_download:
+                                self.logger.info(
+                                    f"{torrent_id}: waiting for file selection ({len(torrent.files)} file(s) found).")
+                            else:
+                                self.logger.info(
+                                    f"{torrent_id}: waiting for file selection (Quick Download disabled, "
+                                    f"{len(torrent.files)} file(s) found).")
 
                     except RealDebridError as e:
                         self.logger.warning(f"Failed to list files for {torrent_id}: {e}")

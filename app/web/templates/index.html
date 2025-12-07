@@ -12,6 +12,20 @@
     <button type="submit">Add</button>
   </form>
 
+  <!-- Quick Download Mode Toggle -->
+  <div style="margin: 16px 0; padding: 12px; background: #1a1a1a; border: 1px solid #333; border-radius: 6px;">
+    <label style="display: flex; align-items: center; cursor: pointer; user-select: none;">
+      <input type="checkbox" id="quickDownloadToggle" checked style="width: 20px; height: 20px; margin-right: 12px; cursor: pointer;">
+      <div>
+        <span style="font-weight: bold; color: #ff6680;">⚡ Quick Download Mode</span>
+        <p style="margin: 4px 0 0 0; color: #888; font-size: 0.9em;">
+          Automatically download single-file torrents and torrents with only media files.
+          Disable to manually confirm all downloads and set options.
+        </p>
+      </div>
+    </label>
+  </div>
+
   <h2>📥 Manual Downloads</h2>
   <table>
     <thead>
@@ -71,6 +85,21 @@
   </div>
 
   <script>
+  // --- Quick Download Mode State (persisted in localStorage) ---
+  const quickDownloadToggle = document.getElementById('quickDownloadToggle');
+
+  // Load saved preference or default to true
+  const savedQuickDownload = localStorage.getItem('quickDownloadMode');
+  if (savedQuickDownload !== null) {
+    quickDownloadToggle.checked = savedQuickDownload === 'true';
+  }
+
+  // Save preference when changed
+  quickDownloadToggle.addEventListener('change', () => {
+    localStorage.setItem('quickDownloadMode', quickDownloadToggle.checked);
+    console.log('Quick Download Mode:', quickDownloadToggle.checked ? 'enabled' : 'disabled');
+  });
+
   // --- handle form submission without reload ---
   const form = document.getElementById('add-form');
   const input = document.getElementById('magnet-input');
@@ -84,7 +113,10 @@
       const resp = await fetch('/add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ magnet })
+        body: new URLSearchParams({
+          magnet: magnet,
+          quick_download: quickDownloadToggle.checked.toString()
+        })
       });
       const data = await resp.json();
       console.log('Torrent added:', data);
