@@ -43,6 +43,10 @@ class FileOps:
                 # Decode URL-encoded characters like %20, %28, etc.
                 filename = unquote(raw_name)
 
+                # Apply filename strip pattern if provided
+                if torrent.filename_strip_pattern:
+                    filename = self._strip_filename_pattern(filename, torrent.filename_strip_pattern)
+
                 # Sanitize filename to avoid filesystem issues
                 filename = re.sub(r'[<>:"/\\|?*]', "_", filename)
 
@@ -96,6 +100,34 @@ class FileOps:
             self.logger.error(f"FileOps error for {torrent.id}: {e}")
             torrent.state = TorrentState.FAILED
             on_complete(torrent.id)
+
+    # ------------------------------
+    # Helper: strip filename pattern
+    # ------------------------------
+    def _strip_filename_pattern(self, filename: str, pattern: str) -> str:
+        """
+        Strip a pattern from the start of a filename and clean up leftover whitespace.
+
+        Args:
+            filename: Original filename
+            pattern: Pattern to strip from the start (case-insensitive)
+
+        Returns:
+            Cleaned filename with pattern removed and whitespace stripped
+        """
+        if not pattern or not filename:
+            return filename
+
+        # Case-insensitive check if filename starts with pattern
+        if filename.lower().startswith(pattern.lower()):
+            # Remove the pattern from the start
+            cleaned = filename[len(pattern):]
+            # Strip any leading whitespace
+            cleaned = cleaned.lstrip()
+            self.logger.info(f"Stripped pattern '{pattern}' from filename: '{filename}' -> '{cleaned}'")
+            return cleaned
+
+        return filename
 
     # ------------------------------
     # Helper: download with retries

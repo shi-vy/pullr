@@ -29,9 +29,17 @@ async def dashboard(request: Request):
 
 
 @app.post("/add")
-async def add_magnet(magnet: str = Form(...)):
+async def add_magnet(magnet: str = Form(...), quick_download: str = Form("true")):
+    """
+    Add a magnet link to the queue.
+
+    Args:
+        magnet: The magnet link
+        quick_download: "true" to enable automatic file selection, "false" to require manual selection
+    """
     if torrent_manager:
-        torrent_id = torrent_manager.add_magnet(magnet)
+        quick_download_enabled = quick_download.lower() == "true"
+        torrent_id = torrent_manager.add_magnet(magnet, quick_download=quick_download_enabled)
         return {"status": "ok", "torrent_id": torrent_id}
     return {"status": "error", "message": "torrent manager not ready"}
 
@@ -61,10 +69,15 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 @app.post("/select_files/{torrent_id}")
-async def select_files(torrent_id: str, files: str = Form(...), folder_name: str = Form(None)):
+async def select_files(
+        torrent_id: str,
+        files: str = Form(...),
+        folder_name: str = Form(None),
+        strip_pattern: str = Form(None)
+):
     """
     Select specific files (comma-separated IDs or 'all') for a torrent.
-    Also accepts optional folder_name for multi-file downloads.
+    Also accepts optional folder_name for multi-file downloads and strip_pattern for filename formatting.
     """
     try:
         if files == "all":
@@ -89,6 +102,11 @@ async def select_files(torrent_id: str, files: str = Form(...), folder_name: str
             if folder_name and folder_name.strip():
                 torrent.custom_folder_name = folder_name.strip()
                 logger.info(f"Set custom folder name '{folder_name}' for torrent {torrent_id}")
+
+            # Store filename strip pattern if provided
+            if strip_pattern and strip_pattern.strip():
+                torrent.filename_strip_pattern = strip_pattern.strip()
+                logger.info(f"Set filename strip pattern '{strip_pattern}' for torrent {torrent_id}")
 
         logger.info(f"Selected files {files} for torrent {torrent_id}.")
         return {"status": "ok", "torrent_id": torrent_id, "selected": files}

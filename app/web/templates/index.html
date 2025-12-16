@@ -12,6 +12,20 @@
     <button type="submit">Add</button>
   </form>
 
+  <!-- Quick Download Mode Toggle -->
+  <div style="margin: 16px 0; padding: 12px; background: #1a1a1a; border: 1px solid #333; border-radius: 6px;">
+    <label style="display: flex; align-items: center; cursor: pointer; user-select: none;">
+      <input type="checkbox" id="quickDownloadToggle" checked style="width: 20px; height: 20px; margin-right: 12px; cursor: pointer;">
+      <div>
+        <span style="font-weight: bold; color: #ff6680;">⚡ Quick Download Mode</span>
+        <p style="margin: 4px 0 0 0; color: #888; font-size: 0.9em;">
+          Automatically download single-file torrents and torrents with only media files.
+          Disable to manually confirm all downloads and set options.
+        </p>
+      </div>
+    </label>
+  </div>
+
   <h2>📥 Manual Downloads</h2>
   <table>
     <thead>
@@ -41,6 +55,26 @@
                  placeholder="e.g., 'Season 1' or 'Movie Collection'"
                  style="width:100%; padding:10px; background:#252525; color:#eee; border:1px solid #444; border-radius:6px;">
         </div>
+
+        <!-- Collapsible Options Section -->
+        <div id="optionsSection" style="margin: 20px 0;">
+          <button type="button" id="toggleOptionsBtn" class="gray" style="width:100%; text-align:left; padding:12px; font-size:0.95em;">
+            ⚙️ Options (click to expand)
+          </button>
+          <div id="optionsContent" style="display:none; margin-top:12px; padding:16px; background:#1f1f1f; border:1px solid #333; border-radius:6px;">
+            <label for="stripPatternInput" style="display:block; margin-bottom:8px; color:#ccc;">
+              Strip Pattern from Filenames:
+            </label>
+            <input type="text" id="stripPatternInput" name="strip_pattern"
+                   placeholder="e.g., '[Judas]' or '[SubsPlease]'"
+                   style="width:100%; padding:10px; background:#252525; color:#eee; border:1px solid #444; border-radius:6px; margin-bottom:8px;">
+            <p style="color:#888; font-size:0.85em; margin:0;">
+              This pattern will be removed from the start of each filename, along with any trailing spaces.
+              Example: "[Judas] Video.mkv" becomes "Video.mkv"
+            </p>
+          </div>
+        </div>
+
         <div class="button-row">
           <button type="button" id="selectAllBtn" class="blue">Select All</button>
           <button type="submit" id="downloadSelectedBtn" class="green">Download Selected</button>
@@ -51,6 +85,21 @@
   </div>
 
   <script>
+  // --- Quick Download Mode State (persisted in localStorage) ---
+  const quickDownloadToggle = document.getElementById('quickDownloadToggle');
+
+  // Load saved preference or default to true
+  const savedQuickDownload = localStorage.getItem('quickDownloadMode');
+  if (savedQuickDownload !== null) {
+    quickDownloadToggle.checked = savedQuickDownload === 'true';
+  }
+
+  // Save preference when changed
+  quickDownloadToggle.addEventListener('change', () => {
+    localStorage.setItem('quickDownloadMode', quickDownloadToggle.checked);
+    console.log('Quick Download Mode:', quickDownloadToggle.checked ? 'enabled' : 'disabled');
+  });
+
   // --- handle form submission without reload ---
   const form = document.getElementById('add-form');
   const input = document.getElementById('magnet-input');
@@ -64,7 +113,10 @@
       const resp = await fetch('/add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ magnet })
+        body: new URLSearchParams({
+          magnet: magnet,
+          quick_download: quickDownloadToggle.checked.toString()
+        })
       });
       const data = await resp.json();
       console.log('Torrent added:', data);
@@ -186,10 +238,20 @@
   const fileForm = document.getElementById("fileForm");
   const folderNameInput = document.getElementById("folderNameInput");
   const folderNameSection = document.getElementById("folderNameSection");
+  const stripPatternInput = document.getElementById("stripPatternInput");
+  const toggleOptionsBtn = document.getElementById("toggleOptionsBtn");
+  const optionsContent = document.getElementById("optionsContent");
   const downloadSelectedBtn = document.getElementById("downloadSelectedBtn");
   const selectAllBtn = document.getElementById("selectAllBtn");
   let currentTorrentId = null;
   let totalFiles = 0;
+
+  // Toggle options section
+  toggleOptionsBtn.addEventListener("click", () => {
+    const isHidden = optionsContent.style.display === "none";
+    optionsContent.style.display = isHidden ? "block" : "none";
+    toggleOptionsBtn.textContent = isHidden ? "⚙️ Options (click to collapse)" : "⚙️ Options (click to expand)";
+  });
 
   function openFileModal(torrentId, files) {
     currentTorrentId = torrentId;
@@ -207,6 +269,11 @@
     `).join("");
 
     folderNameInput.value = "";
+    stripPatternInput.value = "";
+
+    // Reset options section to collapsed
+    optionsContent.style.display = "none";
+    toggleOptionsBtn.textContent = "⚙️ Options (click to expand)";
 
     // Show folder name section only if more than 1 file total
     if (totalFiles > 1) {
@@ -264,7 +331,10 @@
     modal.style.display = "none";
     fileList.innerHTML = "";
     folderNameInput.value = "";
+    stripPatternInput.value = "";
     folderNameSection.style.display = "none";
+    optionsContent.style.display = "none";
+    toggleOptionsBtn.textContent = "⚙️ Options (click to expand)";
     currentTorrentId = null;
     totalFiles = 0;
   };
@@ -282,6 +352,7 @@
 
     const selectedCount = document.querySelectorAll("#fileList input:checked").length;
     const folderName = folderNameInput.value.trim();
+    const stripPattern = stripPatternInput.value.trim();
 
     // Validate: if multiple files selected, folder name is required
     if (selectedCount > 1 && !folderName) {
@@ -293,6 +364,9 @@
     if (folderName && selectedCount > 1) {
       params.append("folder_name", folderName);
     }
+    if (stripPattern) {
+      params.append("strip_pattern", stripPattern);
+    }
 
     fetch(`/select_files/${currentTorrentId}`, {
       method: "POST",
@@ -301,10 +375,16 @@
     })
       .then(() => {
         console.log(`Selected files [${selected}] for ${currentTorrentId}`);
+        if (stripPattern) {
+          console.log(`Applied strip pattern: ${stripPattern}`);
+        }
         modal.style.display = "none";
         fileList.innerHTML = "";
         folderNameInput.value = "";
+        stripPatternInput.value = "";
         folderNameSection.style.display = "none";
+        optionsContent.style.display = "none";
+        toggleOptionsBtn.textContent = "⚙️ Options (click to expand)";
         currentTorrentId = null;
         totalFiles = 0;
       })
