@@ -3,7 +3,9 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 import asyncio
+import logging
 from pathlib import Path
+from core.states import TorrentState
 
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "templates"
@@ -14,7 +16,7 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 torrent_manager = None
-logger = None
+logger = logging.getLogger("pullr.web")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -28,7 +30,7 @@ async def dashboard(request: Request):
             "request": request,
             "torrents": status_data,
             "jellyfin_mode": jellyfin_mode,
-            "version": "1.0"  # Placeholder
+            "version": "1.0"
         }
     )
 
@@ -62,7 +64,6 @@ async def websocket_endpoint(websocket: WebSocket):
                 await asyncio.sleep(1)
                 continue
             data = torrent_manager.get_status()
-            # Inject jellyfin config status into websocket stream for UI logic
             data["config"] = {"jellyfin_mode": torrent_manager.config_data.get("jellyfin_mode", False)}
             await websocket.send_json(data)
             await asyncio.sleep(2)
@@ -80,45 +81,61 @@ async def select_files(
         media_type: str = Form(None)
 ):
     try:
+        logger.info(f"Selecting files for {torrent_id}: raw_files='{files}', tmdb={tmdb_id}")
+
+        if not torrent_manager or torrent_id not in torrent_manager.torrents:
+            return {"status": "error", "error": "Torrent not found"}
+
+        torrent = torrent_manager.torrents[torrent_id]
+
+        # 1. Update Metadata
+        if tmdb_id:
+            torrent.tmdb_id = tmdb_id.strip()
+        if media_type:
+            torrent.media_type = media_type.strip()
+
+        # Validate metadata if in Jellyfin mode
+        if torrent_manager.config_data.get("jellyfin_mode") and torrent.tmdb_id and not torrent.canonical_title:
+            svc = torrent_manager.metadata_service
+            if svc:
+                title = svc.fetch_metadata(torrent.tmdb_id, torrent.media_type or "tv")
+                if title:
+                    torrent.canonical_title = title
+                    if torrent.media_type == "tv":
+                        svc.update_cache(torrent.name, torrent.tmdb_id)
+                else:
+                    raise Exception(f"Could not validate TMDB ID {torrent.tmdb_id}")
+
+        # 2. Select Files in RealDebrid
         if files == "all":
-            torrent_manager.rd.select_torrent_files(torrent_id, ["all"])
+            # Pass list of strings "all" -> map(str) -> "all"
+            resp = torrent_manager.rd.select_torrent_files(torrent_id, ["all"])
         else:
             file_ids = [int(f) for f in files.split(",") if f.strip().isdigit()]
-            torrent_manager.rd.select_torrent_files(torrent_id, file_ids)
+            if not file_ids:
+                logger.error(f"No valid file IDs found in input: {files}")
+                return {"status": "error", "error": "No valid file IDs provided"}
 
-        if torrent_manager and torrent_id in torrent_manager.torrents:
-            torrent = torrent_manager.torrents[torrent_id]
+            logger.info(f"Sending file IDs to RD: {file_ids}")
+            resp = torrent_manager.rd.select_torrent_files(torrent_id, file_ids)
 
-            # Save metadata if provided (critical for Jellyfin mode)
-            if tmdb_id:
-                torrent.tmdb_id = tmdb_id.strip()
-            if media_type:
-                torrent.media_type = media_type.strip()
+        # 3. Update Local State
+        if files == "all":
+            torrent.selected_files = [f["name"] for f in torrent.files]
+        else:
+            file_ids = [int(f) for f in files.split(",") if f.strip().isdigit()]
+            torrent.selected_files = [f["name"] for f in torrent.files if f["id"] in file_ids]
 
-            # Trigger metadata fetch immediately to fail fast if ID invalid
-            if torrent_manager.config_data.get("jellyfin_mode") and torrent.tmdb_id and not torrent.canonical_title:
-                svc = torrent_manager.metadata_service
-                if svc:
-                    title = svc.fetch_metadata(torrent.tmdb_id, torrent.media_type or "tv")
-                    if title:
-                        torrent.canonical_title = title
-                        # Cache if it's a show
-                        if torrent.media_type == "tv":
-                            svc.update_cache(torrent.name, torrent.tmdb_id)
-                    else:
-                        raise Exception("Invalid TMDB ID or API error")
+        if folder_name and folder_name.strip():
+            torrent.custom_folder_name = folder_name.strip()
 
-            if files == "all":
-                torrent.selected_files = [f["name"] for f in torrent.files]
-            else:
-                file_ids = [int(f) for f in files.split(",") if f.strip().isdigit()]
-                torrent.selected_files = [f["name"] for f in torrent.files if f["id"] in file_ids]
+        if strip_pattern and strip_pattern.strip():
+            torrent.filename_strip_pattern = strip_pattern.strip()
 
-            if folder_name and folder_name.strip():
-                torrent.custom_folder_name = folder_name.strip()
-
-            if strip_pattern and strip_pattern.strip():
-                torrent.filename_strip_pattern = strip_pattern.strip()
+        # FORCE STATE UPDATE
+        # This prevents the UI from "hanging" on the selection screen while waiting for the next RD poll
+        torrent.state = TorrentState.WAITING_FOR_REALDEBRID
+        logger.info(f"Successfully selected files for {torrent_id}. State set to WAITING_FOR_REALDEBRID.")
 
         return {"status": "ok", "torrent_id": torrent_id}
     except Exception as e:
