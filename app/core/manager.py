@@ -220,41 +220,35 @@ class TorrentManager:
         try:
             info = self.rd.get_torrent_info(torrent_id)
             rd_status = info.get("status", "").lower()
-            torrent.name = info.get("filename", torrent.name)  # Ensure we have the filename
+            torrent.name = info.get("filename", torrent.name)
 
             if rd_status == "waiting_files_selection":
-                # --- JELLYFIN MODE LOGIC START ---
+                # ... [Existing selection logic] ...
                 jellyfin_enabled = self.config_data.get("jellyfin_mode", False)
                 metadata_ready = True
 
                 if jellyfin_enabled:
-                    # If we don't have metadata yet, try to resolve it from cache
                     if not torrent.tmdb_id and self.metadata_service:
                         cached = self.metadata_service.get_cached_show_id(torrent.name)
                         if cached:
                             torrent.tmdb_id, torrent.media_type = cached
                             self.logger.info(f"{torrent_id}: Auto-resolved from cache -> ID {torrent.tmdb_id}")
 
-                    # If still no metadata, we cannot proceed with auto-selection
                     if not torrent.tmdb_id:
                         metadata_ready = False
 
-                    # If we have ID but no Title, fetch it now
                     if torrent.tmdb_id and not torrent.canonical_title:
                         title = self.metadata_service.fetch_metadata(torrent.tmdb_id, torrent.media_type or "tv")
                         if title:
                             torrent.canonical_title = title
-                            # Update cache if it was a TV show
                             if torrent.media_type == "tv":
                                 self.metadata_service.update_cache(torrent.name, torrent.tmdb_id)
                         else:
-                            # API Failure
                             torrent.state = TorrentState.FAILED
                             torrent.error_message = "Failed to fetch TMDB metadata"
                             return
 
-                # --- JELLYFIN MODE LOGIC END ---
-
+                # ... [Rest of selection logic] ...
                 if torrent.source == "external":
                     torrent.state = TorrentState.WAITING_FOR_REALDEBRID
                 else:
@@ -266,14 +260,11 @@ class TorrentManager:
                         ]
 
                         auto_selected = False
-
-                        # Only attempt auto-select if quick_download IS ON AND metadata is ready (if required)
                         if torrent.quick_download and metadata_ready:
                             auto_selected = self._try_auto_select_files(torrent_id, torrent)
 
                         if not auto_selected:
                             torrent.state = TorrentState.WAITING_FOR_SELECTION
-                            # Log reason
                             if jellyfin_enabled and not metadata_ready:
                                 self.logger.info(f"{torrent_id}: waiting for metadata (TMDB ID required).")
                             else:
@@ -295,10 +286,18 @@ class TorrentManager:
                 torrent.state = TorrentState.WAITING_FOR_REALDEBRID
 
             elif rd_status in ["downloaded", "magnet_conversion_complete", "ready", "finished"]:
-                # Ensure metadata is present before starting download (for external or late-bound torrents)
+                # --- JELLYFIN MODE: Late Metadata Resolution ---
                 if self.config_data.get("jellyfin_mode", False):
+                    # If metadata is missing for a ready torrent (e.g. external), try cache
+                    if not torrent.tmdb_id and self.metadata_service:
+                        cached = self.metadata_service.get_cached_show_id(torrent.name)
+                        if cached:
+                            torrent.tmdb_id, torrent.media_type = cached
+                            self.logger.info(
+                                f"{torrent_id}: Auto-resolved from cache (Late Bind) -> ID {torrent.tmdb_id}")
+
                     if not torrent.tmdb_id:
-                        # Still waiting for metadata even if RD is ready
+                        # Still waiting for metadata
                         torrent.state = TorrentState.WAITING_FOR_SELECTION
                         self.logger.info(f"{torrent_id}: RD ready, but waiting for TMDB metadata.")
                         return
@@ -307,10 +306,13 @@ class TorrentManager:
                         title = self.metadata_service.fetch_metadata(torrent.tmdb_id, torrent.media_type or "tv")
                         if title:
                             torrent.canonical_title = title
+                            if torrent.media_type == "tv":
+                                self.metadata_service.update_cache(torrent.name, torrent.tmdb_id)
                         else:
                             torrent.state = TorrentState.FAILED
                             torrent.error_message = "Failed to fetch TMDB metadata"
                             return
+                # -----------------------------------------------
 
                 links = info.get("links", [])
                 if not links:

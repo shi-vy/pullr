@@ -39,6 +39,7 @@ class MetadataService:
         Returns: The formatted title (e.g. "Slow Horses") or None if failed.
         """
         if not self.api_key:
+            self.logger.error("TMDB API Key is missing.")
             return None
 
         endpoint = "movie" if media_type.lower() == "movie" else "tv"
@@ -49,12 +50,19 @@ class MetadataService:
             "accept": "application/json"
         }
 
+        # LOGGING: Log the request details (masking the key)
+        masked_key = f"{self.api_key[:10]}...{self.api_key[-5:]}" if len(self.api_key) > 15 else "***"
+        self.logger.info(f"TMDB Request: GET {url}")
+        self.logger.info(f"TMDB Headers: Authorization: Bearer {masked_key}")
+
         try:
             resp = requests.get(url, headers=headers, timeout=10)
+
             if resp.status_code == 200:
                 data = resp.json()
                 # TMDB movies use 'title', TV shows use 'name'
                 title = data.get("title") if endpoint == "movie" else data.get("name")
+                self.logger.info(f"TMDB Success: Found title '{title}' for ID {tmdb_id}")
                 return title
             else:
                 self.logger.error(f"TMDB API Error {resp.status_code}: {resp.text}")
@@ -68,8 +76,6 @@ class MetadataService:
         Try to find a cached TMDB ID for a TV show based on filename.
         Returns: (tmdb_id, "tv") or None
         """
-        # Heuristic: Extract "Show.Name" from "Show.Name.S01E01"
-        # Look for SxxExx or 4-digit year pattern
         match = re.search(r"^(.*?)(?:\.S\d{2}| S\d{2}|\.\d{4}| \d{4})", filename, re.IGNORECASE)
         if match:
             clean_name = match.group(1).replace('.', ' ').strip().lower()
@@ -84,7 +90,6 @@ class MetadataService:
         """
         Cache a TV show ID for future lookups.
         """
-        # Same heuristic extraction
         match = re.search(r"^(.*?)(?:\.S\d{2}| S\d{2}|\.\d{4}| \d{4})", filename, re.IGNORECASE)
         if match:
             clean_name = match.group(1).replace('.', ' ').strip().lower()
