@@ -35,17 +35,22 @@ class MetadataService:
 
     def fetch_metadata(self, tmdb_id: str, media_type: str) -> Optional[str]:
         """
-        Fetch title from TMDB.
+        Fetch title from TMDB using Bearer Token authentication.
         Returns: The formatted title (e.g. "Slow Horses") or None if failed.
         """
         if not self.api_key:
             return None
 
         endpoint = "movie" if media_type.lower() == "movie" else "tv"
-        url = f"{self.TMDB_BASE_URL}/{endpoint}/{tmdb_id}?api_key={self.api_key}"
+        url = f"{self.TMDB_BASE_URL}/{endpoint}/{tmdb_id}"
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "accept": "application/json"
+        }
 
         try:
-            resp = requests.get(url, timeout=10)
+            resp = requests.get(url, headers=headers, timeout=10)
             if resp.status_code == 200:
                 data = resp.json()
                 # TMDB movies use 'title', TV shows use 'name'
