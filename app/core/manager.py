@@ -8,6 +8,7 @@ from core.states import TorrentState
 from core.realdebrid import RealDebridClient, RealDebridError
 from core.fileops import FileOps
 from core.services import QueueService, DeletionService, ExternalTorrentService
+from core.services.metadata_service import MetadataService
 
 
 class TorrentItem:
@@ -17,33 +18,35 @@ class TorrentItem:
         self.magnet = magnet_link
         self.id = None
         self.name = None
-        self.source = source  # "manual" or "external"
-        self.quick_download = quick_download  # Enable/disable automatic file selection
+        self.source = source
+        self.quick_download = quick_download
         self.state = TorrentState.SENT_TO_REALDEBRID
         self.last_update = time.time()
         self.direct_links = []
-        # Backoff for unrestrict attempts
         self.progress = 0.0
         self.files = []
-        self.unrestrict_backoff = 60  # seconds, start at 1 min
-        self.next_unrestrict_at = 0  # epoch seconds
-        # Download trigger flag (so FileOps starts only once)
+        self.unrestrict_backoff = 60
+        self.next_unrestrict_at = 0
         self._download_started = False
         self.selected_files = []
         self.custom_folder_name = None
-        self.filename_strip_pattern = None  # Pattern to strip from start of filenames
-        self.error_message = None  # Store error details
-        self.deleted_from_realdebrid = False  # Track if deleted from RD
-        self.completion_time = None  # Track when the torrent finished
+        self.filename_strip_pattern = None
+        self.error_message = None
+        self.deleted_from_realdebrid = False
+        self.completion_time = None
+
+        # Jellyfin Metadata
+        self.tmdb_id = None
+        self.media_type = None  # 'movie' or 'tv'
+        self.canonical_title = None
 
     def schedule_unrestrict_retry(self):
-        # exponential backoff with jitter, cap at 10 min
         self.unrestrict_backoff = min(int(self.unrestrict_backoff * 2), 600)
         jitter = random.randint(0, max(1, int(self.unrestrict_backoff * 0.1)))
         self.next_unrestrict_at = int(time.time()) + self.unrestrict_backoff + jitter
 
     def __repr__(self):
-        return f"<TorrentItem id={self.id} source={self.source} state={self.state} quick_download={self.quick_download}>"
+        return f"<TorrentItem id={self.id} state={self.state} tmdb={self.tmdb_id}>"
 
 
 class TorrentManager:
@@ -54,6 +57,18 @@ class TorrentManager:
         self.config_data = config_data
 
         self.fileops = FileOps(logger)
+        self.metadata_service = None
+
+        # Initialize MetadataService if Jellyfin mode is enabled
+        if self.config_data.get("jellyfin_mode"):
+            try:
+                self.metadata_service = MetadataService(
+                    self.config_data.get("tmdb_api_key"),
+                    logger
+                )
+                self.logger.info("Jellyfin Mode enabled: MetadataService initialized.")
+            except Exception as e:
+                self.logger.error(f"Failed to initialize MetadataService: {e}")
 
         self.running = False
         self.torrents: Dict[str, TorrentItem] = {}
@@ -61,7 +76,6 @@ class TorrentManager:
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
 
-        # Initialize services (must be done after lock is created)
         self.queue_service = QueueService(self.torrents, self.lock, logger)
         self.deletion_service = DeletionService(rd_client, self.torrents, self.lock, logger, config_data)
         self.external_service = ExternalTorrentService(
@@ -70,15 +84,14 @@ class TorrentManager:
             self.lock,
             logger,
             config_data,
-            time.time(),  # app_start_time
-            self.queue_service  # Pass queue service so external torrents can be added to queue
+            time.time(),
+            self.queue_service
         )
 
     # ------------------------------
     # Public Methods
     # ------------------------------
     def start(self):
-        """Starts the torrent polling loop in a background thread."""
         if self.thread and self.thread.is_alive():
             self.logger.warning("TorrentManager already running.")
             return
@@ -86,10 +99,9 @@ class TorrentManager:
         self.stop_event.clear()
         self.thread = threading.Thread(target=self._poll_loop, daemon=True)
         self.thread.start()
-        self.logger.info("Starting TorrentManager polling thread with queue system...")
+        self.logger.info("Starting TorrentManager polling thread...")
 
     def stop(self):
-        """Stops the polling loop cleanly."""
         if not self.running:
             return
         self.logger.info("Stopping TorrentManager polling thread...")
@@ -99,43 +111,45 @@ class TorrentManager:
             self.thread.join(timeout=5)
             self.logger.info("Torrent polling loop stopped.")
 
-    def add_magnet(self, magnet_link: str, quick_download: bool = True):
+    def add_magnet(self, magnet_link: str, quick_download: bool = True, tmdb_id: str = None, media_type: str = None):
         """Add a new magnet link to RealDebrid and queue."""
         try:
-            self.logger.info(f"Adding magnet link: {magnet_link[:60]}... (quick_download={quick_download})")
+            self.logger.info(f"Adding magnet link: {magnet_link[:60]}... (quick={quick_download})")
             result = self.rd.add_magnet(magnet_link)
             torrent_id = result.get("id")
             if not torrent_id:
                 raise RealDebridError("No torrent ID returned from RealDebrid.")
+
             item = TorrentItem(magnet_link, source="manual", quick_download=quick_download)
             item.id = torrent_id
             item.state = TorrentState.WAITING_FOR_REALDEBRID
+
+            # Set initial metadata if provided
+            if tmdb_id:
+                item.tmdb_id = tmdb_id.strip()
+            if media_type:
+                item.media_type = media_type.strip().lower()
+
             with self.lock:
                 self.torrents[torrent_id] = item
 
-            # Mark as known and add to queue (both use their own locks)
             self.external_service.mark_as_known(torrent_id)
-            queue_position = self.queue_service.add_to_queue(torrent_id)
+            self.queue_service.add_to_queue(torrent_id)
             return torrent_id
         except RealDebridError as e:
             self.logger.error(f"Failed to add magnet: {e}")
             return None
 
     def get_status(self):
-        """Return a snapshot of current torrent states with queue information, separated by source."""
         manual_torrents = {}
         external_torrents = {}
 
         with self.lock:
             torrent_items = list(self.torrents.items())
 
-        # Process torrents outside the lock to avoid deadlock with service methods
         for tid, t in torrent_items:
-            # Get queue position from service (uses its own lock)
             queue_position = self.queue_service.get_queue_position(tid)
             is_active = self.queue_service.is_active(tid)
-
-            # Get deletion info from service (uses its own lock)
             deletion_info = self.deletion_service.get_deletion_time_remaining(tid)
 
             torrent_data = {
@@ -144,11 +158,15 @@ class TorrentManager:
                 "name": t.name or tid,
                 "files": getattr(t, "files", []),
                 "selected_files": t.selected_files if t.selected_files else [],
-                "custom_folder_name": getattr(t, "custom_folder_name", None),
                 "queue_position": queue_position,
                 "is_active": is_active,
                 "error_message": t.error_message,
-                "deletion_in": deletion_info
+                "deletion_in": deletion_info,
+                # Metadata fields
+                "tmdb_id": t.tmdb_id,
+                "media_type": t.media_type,
+                "canonical_title": t.canonical_title,
+                "needs_metadata": (self.config_data.get("jellyfin_mode") and not t.tmdb_id)
             }
 
             if t.source == "external":
@@ -165,36 +183,22 @@ class TorrentManager:
     # Internal Polling Loop
     # ------------------------------
     def _poll_loop(self):
-        self.logger.info("Torrent polling loop started with queue system.")
+        self.logger.info("Torrent polling loop started.")
         while not self.stop_event.is_set():
             try:
                 self._process_queue()
-
-                # Process pending deletions via service
                 self.deletion_service.process_pending_deletions()
-
-                # Scan for external torrents via service
                 if self.external_service.should_scan():
                     self.external_service.scan_for_external_torrents()
-
             except Exception as e:
                 self.logger.warning(f"Polling loop error: {e}")
             time.sleep(self.poll_interval)
-        self.logger.info("Torrent polling loop stopped.")
 
     def _process_queue(self):
-        """Process the queue - activate next torrent if needed and update all torrents up to AVAILABLE state."""
-        # Activate next torrent if needed
         self.queue_service.get_next_active()
-
-        # Clean up failed torrents from queue
         self.queue_service.clean_failed_from_queue()
-
-        # Get all torrent IDs and their queue status
         with self.lock:
             torrent_items = list(self.torrents.items())
-
-        # Update all torrents (outside of lock to avoid blocking)
         for torrent_id, torrent in torrent_items:
             is_active = self.queue_service.is_active(torrent_id)
             try:
@@ -203,98 +207,123 @@ class TorrentManager:
                 self.logger.warning(f"Error updating torrent {torrent_id}: {e}")
 
     def _update_torrent(self, torrent_id: str, torrent: TorrentItem, is_active: bool):
-        """Update a single torrent's state. Only active torrents can proceed to downloading."""
         now = int(time.time())
 
-        # Skip updates for finished, failed, downloading, or transferring torrents
-        # These states are terminal or managed by FileOps
         if torrent.state in (TorrentState.FINISHED, TorrentState.FAILED,
                              TorrentState.DOWNLOADING_FROM_REALDEBRID,
                              TorrentState.TRANSFERRING_TO_MEDIA_SERVER):
-            self.logger.debug(f"{torrent_id}: Skipping update (state={torrent.state})")
             return
 
-        # Skip updates if torrent was deleted from RealDebrid
         if torrent.deleted_from_realdebrid:
-            self.logger.debug(f"{torrent_id}: Skipping update (deleted from RealDebrid)")
             return
 
         try:
             info = self.rd.get_torrent_info(torrent_id)
             rd_status = info.get("status", "").lower()
+            torrent.name = info.get("filename", torrent.name)  # Ensure we have the filename
 
-            self.logger.debug(f"{torrent_id}: RD status -> {rd_status} (active={is_active})")
-
-            # --- waiting / converting / queued states ---
             if rd_status == "waiting_files_selection":
-                # Skip for external torrents (they should have files auto-selected already)
+                # --- JELLYFIN MODE LOGIC START ---
+                jellyfin_enabled = self.config_data.get("jellyfin_mode", False)
+                metadata_ready = True
+
+                if jellyfin_enabled:
+                    # If we don't have metadata yet, try to resolve it from cache
+                    if not torrent.tmdb_id and self.metadata_service:
+                        cached = self.metadata_service.get_cached_show_id(torrent.name)
+                        if cached:
+                            torrent.tmdb_id, torrent.media_type = cached
+                            self.logger.info(f"{torrent_id}: Auto-resolved from cache -> ID {torrent.tmdb_id}")
+
+                    # If still no metadata, we cannot proceed with auto-selection
+                    if not torrent.tmdb_id:
+                        metadata_ready = False
+
+                    # If we have ID but no Title, fetch it now
+                    if torrent.tmdb_id and not torrent.canonical_title:
+                        title = self.metadata_service.fetch_metadata(torrent.tmdb_id, torrent.media_type or "tv")
+                        if title:
+                            torrent.canonical_title = title
+                            # Update cache if it was a TV show
+                            if torrent.media_type == "tv":
+                                self.metadata_service.update_cache(torrent.name, torrent.tmdb_id)
+                        else:
+                            # API Failure
+                            torrent.state = TorrentState.FAILED
+                            torrent.error_message = "Failed to fetch TMDB metadata"
+                            return
+
+                # --- JELLYFIN MODE LOGIC END ---
+
                 if torrent.source == "external":
                     torrent.state = TorrentState.WAITING_FOR_REALDEBRID
                 else:
                     try:
                         files_info = self.rd.list_torrent_files(torrent_id)
                         torrent.files = [
-                            {
-                                "id": f["id"],
-                                "name": f["path"].split("/")[-1],
-                                "bytes": f["bytes"]
-                            }
+                            {"id": f["id"], "name": f["path"].split("/")[-1], "bytes": f["bytes"]}
                             for f in files_info.get("files", [])
                         ]
 
-                        # Try automatic file selection ONLY if quick_download is enabled
                         auto_selected = False
-                        if torrent.quick_download:
+
+                        # Only attempt auto-select if quick_download IS ON AND metadata is ready (if required)
+                        if torrent.quick_download and metadata_ready:
                             auto_selected = self._try_auto_select_files(torrent_id, torrent)
 
                         if not auto_selected:
-                            # Manual selection required
                             torrent.state = TorrentState.WAITING_FOR_SELECTION
-                            if torrent.quick_download:
-                                self.logger.info(
-                                    f"{torrent_id}: waiting for file selection ({len(torrent.files)} file(s) found).")
+                            # Log reason
+                            if jellyfin_enabled and not metadata_ready:
+                                self.logger.info(f"{torrent_id}: waiting for metadata (TMDB ID required).")
                             else:
-                                self.logger.info(
-                                    f"{torrent_id}: waiting for file selection (Quick Download disabled, "
-                                    f"{len(torrent.files)} file(s) found).")
+                                self.logger.info(f"{torrent_id}: waiting for file selection.")
 
                     except RealDebridError as e:
-                        self.logger.warning(f"Failed to list files for {torrent_id}: {e}")
+                        self.logger.warning(f"Failed to list files: {e}")
                         torrent.state = TorrentState.WAITING_FOR_REALDEBRID
 
             elif rd_status == "magnet_error":
-                # Invalid magnet link - mark as failed immediately
                 torrent.state = TorrentState.FAILED
                 torrent.error_message = "Invalid magnet link"
-                self.logger.error(f"Torrent {torrent_id} failed: Invalid magnet link (magnet_error from RealDebrid)")
-                # This will trigger removal from queue on next cycle
 
             elif rd_status in ["virus", "dead"]:
-                # Torrent contains virus or is dead - mark as failed
                 torrent.state = TorrentState.FAILED
                 torrent.error_message = f"RealDebrid status: {rd_status}"
-                self.logger.error(f"Torrent {torrent_id} failed: RealDebrid reported status '{rd_status}'")
 
             elif rd_status in ["magnet_conversion", "magnet_converting", "queued", "downloading"]:
                 torrent.state = TorrentState.WAITING_FOR_REALDEBRID
 
-            # --- ready / finished states ---
             elif rd_status in ["downloaded", "magnet_conversion_complete", "ready", "finished"]:
+                # Ensure metadata is present before starting download (for external or late-bound torrents)
+                if self.config_data.get("jellyfin_mode", False):
+                    if not torrent.tmdb_id:
+                        # Still waiting for metadata even if RD is ready
+                        torrent.state = TorrentState.WAITING_FOR_SELECTION
+                        self.logger.info(f"{torrent_id}: RD ready, but waiting for TMDB metadata.")
+                        return
+
+                    if not torrent.canonical_title:
+                        title = self.metadata_service.fetch_metadata(torrent.tmdb_id, torrent.media_type or "tv")
+                        if title:
+                            torrent.canonical_title = title
+                        else:
+                            torrent.state = TorrentState.FAILED
+                            torrent.error_message = "Failed to fetch TMDB metadata"
+                            return
+
                 links = info.get("links", [])
                 if not links:
                     torrent.state = TorrentState.WAITING_FOR_REALDEBRID
                 else:
-                    # Skip unrestrict if we already have direct links
                     if torrent.direct_links:
                         torrent.state = TorrentState.AVAILABLE_FROM_REALDEBRID
                     else:
-                        # Respect backoff before attempting unrestrict
                         if torrent.next_unrestrict_at and now < torrent.next_unrestrict_at:
                             torrent.state = TorrentState.AVAILABLE_FROM_REALDEBRID
                         else:
                             self._attempt_unrestrict(torrent_id, torrent, links)
 
-                    # CRITICAL: Only trigger FileOps if this torrent is ACTIVE
                     if (is_active
                             and torrent.state == TorrentState.AVAILABLE_FROM_REALDEBRID
                             and torrent.direct_links
@@ -309,110 +338,51 @@ class TorrentManager:
                             on_transfer=lambda tid=torrent.id: self.on_transfer_complete(tid)
                         )
                     elif not is_active and torrent.direct_links:
-                        # Torrent is ready but waiting in queue
                         torrent.state = TorrentState.WAITING_IN_QUEUE
-                        self.logger.debug(f"{torrent_id}: Ready but waiting in queue (not active)")
 
             elif rd_status == "error":
                 torrent.state = TorrentState.FAILED
                 torrent.error_message = "RealDebrid error status"
-                self.logger.error(f"Torrent {torrent_id} failed with error status from RealDebrid")
-
-            else:
-                self.logger.debug(
-                    f"{torrent_id}: Unhandled RD status '{rd_status}', leaving state as {torrent.state}.")
 
             torrent.last_update = time.time()
 
         except RealDebridError as e:
-            # Check if it's a 404 error (torrent deleted)
             if "404" in str(e):
-                self.logger.debug(
-                    f"Torrent {torrent_id} not found in RealDebrid (likely deleted), skipping further updates")
                 torrent.deleted_from_realdebrid = True
             else:
                 self.logger.warning(f"Error updating torrent {torrent_id}: {e}")
 
-    # ------------------------------
-    # Helpers
-    # ------------------------------
     def _try_auto_select_files(self, torrent_id: str, torrent: TorrentItem) -> bool:
-        """
-        Attempt automatic file selection for a torrent.
-
-        Rules:
-        1. If only one file total → auto-select it
-        2. If multiple files but only one media file (.mkv/.mp4) → auto-select that media file
-
-        Args:
-            torrent_id: ID of the torrent
-            torrent: TorrentItem instance
-
-        Returns:
-            True if automatic selection was made, False if manual selection required
-        """
         files = torrent.files
+        if not files: return False
 
-        if not files:
-            return False
+        selected_id = None
+        selected_name = None
 
-        # Rule 1: Single file - auto-select
         if len(files) == 1:
-            file_id = files[0]["id"]
-            file_name = files[0]["name"]
+            selected_id = files[0]["id"]
+            selected_name = files[0]["name"]
+        else:
+            media_extensions = {'.mkv', '.mp4', '.avi'}
+            media_files = [f for f in files if any(f["name"].lower().endswith(ext) for ext in media_extensions)]
+            if len(media_files) == 1:
+                selected_id = media_files[0]["id"]
+                selected_name = media_files[0]["name"]
 
+        if selected_id:
             try:
-                self.rd.select_torrent_files(torrent_id, [file_id])
-                torrent.selected_files = [file_name]
-                torrent.custom_folder_name = None  # Single file, no folder needed
+                self.rd.select_torrent_files(torrent_id, [selected_id])
+                torrent.selected_files = [selected_name]
+                torrent.custom_folder_name = None
                 torrent.state = TorrentState.WAITING_FOR_REALDEBRID
-
-                self.logger.info(
-                    f"{torrent_id}: Auto-selected single file '{file_name}'"
-                )
+                self.logger.info(f"{torrent_id}: Auto-selected '{selected_name}'")
                 return True
-
-            except RealDebridError as e:
-                self.logger.warning(f"Failed to auto-select single file for {torrent_id}: {e}")
+            except RealDebridError:
                 return False
 
-        # Rule 2: Multiple files, but only one media file
-        media_extensions = {'.mkv', '.mp4'}
-        media_files = [
-            f for f in files
-            if any(f["name"].lower().endswith(ext) for ext in media_extensions)
-        ]
-
-        if len(media_files) == 1:
-            media_file = media_files[0]
-            file_id = media_file["id"]
-            file_name = media_file["name"]
-
-            try:
-                self.rd.select_torrent_files(torrent_id, [file_id])
-                torrent.selected_files = [file_name]
-                torrent.custom_folder_name = None  # Single file, no folder needed
-                torrent.state = TorrentState.WAITING_FOR_REALDEBRID
-
-                self.logger.info(
-                    f"{torrent_id}: Auto-selected single media file '{file_name}' "
-                    f"from {len(files)} total files"
-                )
-                return True
-
-            except RealDebridError as e:
-                self.logger.warning(f"Failed to auto-select media file for {torrent_id}: {e}")
-                return False
-
-        # Multiple files and either zero or multiple media files - manual selection required
-        self.logger.info(
-            f"{torrent_id}: Manual selection required "
-            f"({len(files)} files, {len(media_files)} media files)"
-        )
         return False
 
     def _attempt_unrestrict(self, torrent_id: str, torrent: TorrentItem, links: list[str]):
-        """Try to unrestrict RD links into direct download URLs, with logging/backoff."""
         self.logger.info(f"Generating direct links for torrent {torrent_id}...")
         direct_links = []
         all_failed_hoster_unavailable = True
@@ -427,11 +397,8 @@ class TorrentManager:
             except RealDebridError as e:
                 msg = str(e).lower()
                 if "hoster_unavailable" in msg or "503" in msg:
-                    self.logger.info(
-                        f"Hoster unavailable for torrent {torrent_id}. Will retry later."
-                    )
+                    self.logger.info(f"Hoster unavailable for torrent {torrent_id}.")
                 else:
-                    # Non-hoster failure — log and allow next loop to retry
                     all_failed_hoster_unavailable = False
                     self.logger.warning(f"Unrestrict error for {torrent_id}: {e}")
 
@@ -440,38 +407,26 @@ class TorrentManager:
             torrent.state = TorrentState.AVAILABLE_FROM_REALDEBRID
             torrent.unrestrict_backoff = 60
             torrent.next_unrestrict_at = 0
-            self.logger.info(
-                f"Torrent {torrent_id} available: {len(torrent.direct_links)} file(s) ready for download."
-            )
+            self.logger.info(f"Torrent {torrent_id} available: {len(torrent.direct_links)} links.")
         else:
             if all_failed_hoster_unavailable:
                 torrent.schedule_unrestrict_retry()
                 wait = torrent.next_unrestrict_at - int(time.time())
-                torrent.state = TorrentState.AVAILABLE_FROM_REALDEBRID
-                self.logger.info(
-                    f"Hoster unavailable for all links of {torrent_id}. Retrying unrestrict in ~{wait}s."
-                )
+                torrent.state = TorrentState.AVAILABLE_FROM_REALDEBRID  # Keep available to retry
+                self.logger.info(f"Hoster unavailable for {torrent_id}. Retrying in ~{wait}s.")
             else:
-                # keep available; another loop will try again
                 torrent.state = TorrentState.AVAILABLE_FROM_REALDEBRID
 
     def _on_download_complete(self, torrent_id: str):
-        """Called when a torrent completes (success or failure)."""
         self.logger.info(f"Torrent {torrent_id} completed FileOps cycle.")
-
         with self.lock:
             torrent = self.torrents.get(torrent_id)
-            if not torrent:
-                return
+            if not torrent: return
 
-        # Schedule deletion via service
         if self.config_data.get("delete_on_complete", True):
             self.deletion_service.schedule_deletion(torrent_id)
 
-        # Clean up temporary download directory via service
         self.deletion_service.cleanup_temp_directory(torrent_id)
-
-        # Remove from queue and clear active via service
         self.queue_service.remove_from_queue(torrent_id)
         if self.queue_service.is_active(torrent_id):
             self.queue_service.clear_active()
