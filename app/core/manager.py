@@ -34,8 +34,9 @@ class TorrentItem:
         self.deleted_from_realdebrid = False
         self.completion_time = None
 
-        # ADDED: TMDB ID field (initially None)
+        # ADDED: TMDB ID and Media Type fields
         self.tmdb_id = None
+        self.media_type = None  # 'movie' or 'tv'
 
     def schedule_unrestrict_retry(self):
         self.unrestrict_backoff = min(int(self.unrestrict_backoff * 2), 600)
@@ -43,7 +44,7 @@ class TorrentItem:
         self.next_unrestrict_at = int(time.time()) + self.unrestrict_backoff + jitter
 
     def __repr__(self):
-        return f"<TorrentItem id={self.id} source={self.source} state={self.state} tmdb={self.tmdb_id}>"
+        return f"<TorrentItem id={self.id} source={self.source} state={self.state} tmdb={self.tmdb_id} type={self.media_type}>"
 
 
 class TorrentManager:

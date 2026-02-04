@@ -63,8 +63,17 @@ class FileOps:
 
             if tmdb_id:
                 # Metadata exists -> Standard Media Path
-                dest_root = Path(config["media_path"])
-                self.logger.info(f"Torrent {torrent.id} has TMDB ID {tmdb_id}. Moving to Media Library.")
+                base_media_path = Path(config["media_path"])
+                media_type = getattr(torrent, 'media_type', 'unknown')
+
+                if media_type == 'movie':
+                    dest_root = base_media_path / "movies"
+                elif media_type == 'tv':
+                    dest_root = base_media_path / "tv"
+                else:
+                    dest_root = base_media_path
+
+                self.logger.info(f"Torrent {torrent.id} has TMDB ID {tmdb_id} ({media_type}). Moving to: {dest_root}")
             else:
                 # No Metadata -> Unsorted Path
                 # Use config value or default to 'unsorted' subdir in media path
@@ -114,6 +123,63 @@ class FileOps:
             self.logger.error(f"FileOps error for {torrent.id}: {e}")
             torrent.state = TorrentState.FAILED
             on_complete(torrent.id)
+
+    def move_from_unsorted(self, torrent, config):
+        """Move a finished torrent from Unsorted to the final Media Library."""
+        try:
+            # Resolve Unsorted Path
+            unsorted_str = config.get("unsorted_path")
+            if unsorted_str:
+                unsorted_root = Path(unsorted_str)
+            else:
+                unsorted_root = Path(config["media_path"]) / "unsorted"
+
+            # Resolve Destination based on Media Type
+            base_media_path = Path(config["media_path"])
+            media_type = getattr(torrent, 'media_type', 'unknown')
+
+            if media_type == 'movie':
+                dest_root = base_media_path / "movies"
+            elif media_type == 'tv':
+                dest_root = base_media_path / "tv"
+            else:
+                dest_root = base_media_path
+
+            dest_root.mkdir(parents=True, exist_ok=True)
+
+            # Determine folder/file name
+            folder_name = torrent.custom_folder_name if torrent.custom_folder_name else torrent.id
+            folder_name = re.sub(r'[<>:"/\\|?*]', "_", folder_name)
+
+            source_path = unsorted_root / folder_name
+            target_path = dest_root / folder_name
+
+            if not source_path.exists():
+                # Fallback check for single files (if they weren't put in a folder)
+                possible_file = unsorted_root / torrent.files[0]['path'].lstrip('/') if torrent.files else None
+                if possible_file and possible_file.exists():
+                    source_path = possible_file
+                    target_path = dest_root / source_path.name
+                else:
+                    self.logger.error(f"Cannot find source path {source_path} in unsorted.")
+                    return False
+
+            self.logger.info(f"Moving {source_path} -> {target_path}")
+
+            # Move logic
+            if target_path.exists():
+                self.logger.warning(f"Target {target_path} exists. Overwriting.")
+                if target_path.is_dir():
+                    shutil.rmtree(target_path)
+                else:
+                    target_path.unlink()
+
+            shutil.move(str(source_path), str(target_path))
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Error moving from unsorted: {e}")
+            return False
 
     def _strip_filename_pattern(self, filename: str, pattern: str) -> str:
         if not pattern or not filename:

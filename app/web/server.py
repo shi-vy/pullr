@@ -5,6 +5,8 @@ from fastapi.staticfiles import StaticFiles
 import asyncio
 import os
 from pathlib import Path
+# FIX: Import TorrentState to resolve NameError
+from core.states import TorrentState
 
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "templates"
@@ -35,8 +37,8 @@ async def add_magnet(magnet: str = Form(...), quick_download: str = Form("true")
 
 
 @app.post("/set_metadata/{torrent_id}")
-async def set_metadata(torrent_id: str, tmdb_id: str = Form(...)):
-    """Set TMDB ID for a specific torrent."""
+async def set_metadata(torrent_id: str, tmdb_id: str = Form(...), media_type: str = Form(...)):
+    """Set TMDB ID and Media Type (movie/tv) for a specific torrent."""
     if not torrent_manager:
         return {"status": "error", "message": "Manager not ready"}
 
@@ -46,14 +48,16 @@ async def set_metadata(torrent_id: str, tmdb_id: str = Form(...)):
             raise HTTPException(status_code=404, detail="Torrent not found")
 
         torrent.tmdb_id = tmdb_id.strip()
+        torrent.media_type = media_type.strip().lower()  # Expecting 'movie' or 'tv'
+
         if logger:
-            logger.info(f"Updated metadata for {torrent_id}: TMDB ID = {torrent.tmdb_id}")
+            logger.info(f"Updated metadata for {torrent_id}: TMDB ID = {torrent.tmdb_id}, Type = {torrent.media_type}")
 
         # TRIGGER: If waiting in Unsorted, move it now
         if torrent.state == TorrentState.WAITING_FOR_METADATA:
             torrent_manager.retry_import_with_metadata(torrent_id)
 
-    return {"status": "ok", "torrent_id": torrent_id, "tmdb_id": torrent.tmdb_id}
+    return {"status": "ok", "torrent_id": torrent_id, "tmdb_id": torrent.tmdb_id, "media_type": torrent.media_type}
 
 
 @app.websocket("/ws")
