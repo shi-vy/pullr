@@ -156,3 +156,42 @@ class FileOps:
                 if attempt == max_retries:
                     raise
                 time.sleep(3 * attempt)
+
+    # Add this new method to the FileOps class
+    def move_from_unsorted(self, torrent, config):
+        """Move a finished torrent from Unsorted to the final Media Library."""
+        try:
+            unsorted_str = config.get("unsorted_path")
+            if unsorted_str:
+                unsorted_root = Path(unsorted_str)
+            else:
+                unsorted_root = Path(config["media_path"]) / "unsorted"
+
+            dest_root = Path(config["media_path"])
+
+            # Determine the source folder/file
+            folder_name = torrent.custom_folder_name if torrent.custom_folder_name else torrent.id
+            folder_name = re.sub(r'[<>:"/\\|?*]', "_", folder_name)
+
+            source_path = unsorted_root / folder_name
+            target_path = dest_root / folder_name
+
+            if not source_path.exists():
+                # Check if it was a single file download (might be sitting directly in root)
+                # This is a basic check, might need refinement depending on how your single files are named
+                # For now, we assume the folder structure created during download
+                self.logger.error(f"Cannot find source path {source_path} in unsorted.")
+                return False
+
+            self.logger.info(f"Moving {source_path} -> {target_path}")
+
+            if target_path.exists():
+                self.logger.warning(f"Target {target_path} exists. Overwriting.")
+                shutil.rmtree(target_path)
+
+            shutil.move(str(source_path), str(target_path))
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Error moving from unsorted: {e}")
+            return False

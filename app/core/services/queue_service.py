@@ -175,3 +175,15 @@ class QueueService:
         """
         with self.lock:
             return len(self.queue)
+
+    # Add this method to the QueueService class
+    def mark_completed(self, torrent_id: str):
+        """Mark a torrent as complete and advance the queue."""
+        with self.lock:
+            # If this was the active torrent, clear it so the next one can start
+            if self.active_torrent_id == torrent_id:
+                self.active_torrent_id = None
+                self.logger.info(f"Torrent {torrent_id} marked complete. Queue slot freed.")
+
+            # We trigger the next update cycle immediately
+            # (The manager loop will pick up the next item automatically)
