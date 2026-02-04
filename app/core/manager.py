@@ -57,14 +57,18 @@ class TorrentManager:
 
         self.running = False
         self.torrents: Dict[str, TorrentItem] = {}
-        self.lock = threading.Lock()
+
+        # CRITICAL FIX: Use RLock (Re-entrant Lock) to prevent deadlocks when
+        # manager calls services that also need the lock.
+        self.lock = threading.RLock()
+
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
 
         # Initialize Services
         self.queue_service = QueueService(self.torrents, self.lock, logger)
 
-        # Deletion Service (No start/stop needed based on your code)
+        # Deletion Service
         self.deletion_service = DeletionService(rd_client, self.torrents, self.lock, logger, config_data)
 
         # External Service
@@ -89,9 +93,6 @@ class TorrentManager:
         self.thread.start()
         self.logger.info("Starting TorrentManager polling thread with queue system...")
 
-        # NOTE: deletion_service and external_service do not need explicit start()
-        # calls as their logic is invoked within the poll loop or handled internally.
-
     def stop(self):
         """Stops the polling loop cleanly."""
         if not self.running:
@@ -107,7 +108,7 @@ class TorrentManager:
     def add_magnet(self, magnet_link: str, quick_download: bool = True):
         """Add a new magnet link to RealDebrid and queue."""
         try:
-            self.logger.info(f"Adding magnet link: {magnet_link[:60]}... (quick_download={quick_download})")
+            self.logger.info(f"[ADD] Adding magnet link: {magnet_link[:60]}... (quick={quick_download})")
             result = self.rd.add_magnet(magnet_link)
             torrent_id = result.get("id")
             if not torrent_id:
@@ -126,13 +127,15 @@ class TorrentManager:
             # Add to queue (passing ID to match external service usage)
             self.queue_service.add_to_queue(torrent_id)
 
+            self.logger.info(f"[ADD] Successfully added {torrent_id}")
             return torrent_id
         except RealDebridError as e:
-            self.logger.error(f"Failed to add magnet: {e}")
+            self.logger.error(f"[ADD] Failed to add magnet: {e}")
             return None
 
     def get_status(self):
         """Return a snapshot of current torrent states."""
+        # self.logger.debug("[STATUS] Acquiring lock for status snapshot...")
         manual_torrents = {}
         external_torrents = {}
 
@@ -156,7 +159,7 @@ class TorrentManager:
                 "is_active": is_active,
                 "error_message": t.error_message,
                 "deletion_in": deletion_info,
-                "tmdb_id": t.tmdb_id,  # Return tmdb_id to UI
+                "tmdb_id": t.tmdb_id,
                 "source": t.source
             }
 
@@ -174,6 +177,8 @@ class TorrentManager:
         self.logger.info("Torrent polling loop started.")
         while not self.stop_event.is_set():
             try:
+                # self.logger.debug("[POLL] Starting poll cycle...")
+
                 # 1. Process Queue
                 self._process_queue()
 
@@ -182,17 +187,17 @@ class TorrentManager:
 
                 # 3. Scan for External Torrents
                 if self.external_service.should_scan():
-                    # No arguments needed; service updates shared torrents dict directly
                     self.external_service.scan_for_external_torrents()
 
             except Exception as e:
-                self.logger.warning(f"Polling loop error: {e}")
+                self.logger.warning(f"[POLL] Error in loop: {e}", exc_info=True)
 
             time.sleep(self.poll_interval)
         self.logger.info("Torrent polling loop stopped.")
 
     def _process_queue(self):
         """Process the queue."""
+        # self.logger.debug("[QUEUE] Checking next active...")
         self.queue_service.get_next_active()
         self.queue_service.clean_failed_from_queue()
 
@@ -210,6 +215,7 @@ class TorrentManager:
         """Update a single torrent's state."""
         now = int(time.time())
 
+        # FIX: Added WAITING_FOR_METADATA to exclusion list
         if torrent.state in (TorrentState.FINISHED, TorrentState.FAILED,
                              TorrentState.DOWNLOADING_FROM_REALDEBRID,
                              TorrentState.TRANSFERRING_TO_MEDIA_SERVER,
@@ -227,8 +233,6 @@ class TorrentManager:
             # --- waiting / converting / queued states ---
             if rd_status == "waiting_files_selection":
                 if torrent.source == "external":
-                    # External torrents are auto-selected by the external service
-                    # or RD logic, but we update state here.
                     torrent.state = TorrentState.WAITING_FOR_REALDEBRID
                 else:
                     try:
@@ -272,9 +276,6 @@ class TorrentManager:
                             self._attempt_unrestrict(torrent_id, torrent, links)
 
                     # --- UNBLOCKING LOGIC ---
-                    # Check if Active + Links + Not Started.
-                    # We do NOT check for tmdb_id here, allowing the download to proceed.
-                    # FileOps will route to "Unsorted" if metadata is missing.
                     if (is_active
                             and torrent.state == TorrentState.AVAILABLE_FROM_REALDEBRID
                             and torrent.direct_links
@@ -282,7 +283,7 @@ class TorrentManager:
 
                         torrent._download_started = True
                         self.logger.info(
-                            f"Triggering FileOps for ACTIVE torrent {torrent.id} (TMDB: {torrent.tmdb_id})")
+                            f"[START] Triggering FileOps for ACTIVE torrent {torrent.id} (TMDB: {torrent.tmdb_id})")
 
                         self.fileops.start_download(
                             torrent,
@@ -319,6 +320,7 @@ class TorrentManager:
                 torrent.selected_files = [files[0]["name"]]
                 torrent.custom_folder_name = None
                 torrent.state = TorrentState.WAITING_FOR_REALDEBRID
+                self.logger.info(f"[AUTO-SELECT] Selected single file for {torrent_id}")
                 return True
             except RealDebridError:
                 return False
@@ -332,6 +334,7 @@ class TorrentManager:
                 torrent.selected_files = [media_files[0]["name"]]
                 torrent.custom_folder_name = None
                 torrent.state = TorrentState.WAITING_FOR_REALDEBRID
+                self.logger.info(f"[AUTO-SELECT] Selected single media file for {torrent_id}")
                 return True
             except RealDebridError:
                 return False
@@ -361,36 +364,41 @@ class TorrentManager:
             torrent.state = TorrentState.AVAILABLE_FROM_REALDEBRID
             torrent.unrestrict_backoff = 60
             torrent.next_unrestrict_at = 0
+            self.logger.info(f"[UNRESTRICT] Successfully unrestricted {len(direct_links)} links for {torrent_id}")
         else:
             if all_failed_hoster_unavailable:
                 torrent.schedule_unrestrict_retry()
                 torrent.state = TorrentState.AVAILABLE_FROM_REALDEBRID
+                self.logger.info(
+                    f"[UNRESTRICT] Hoster unavailable for {torrent_id}. Retrying in {torrent.unrestrict_backoff}s")
             else:
                 torrent.state = TorrentState.AVAILABLE_FROM_REALDEBRID
 
-    # In TorrentManager class
     def _on_download_complete(self, torrent_id: str):
         """Called when a torrent completes (success or failure)."""
+        self.logger.info(f"[COMPLETE] _on_download_complete called for {torrent_id}")
         try:
-            self.logger.info(f"FileOps finished for {torrent_id}")
-
             with self.lock:
+                self.logger.info(f"[COMPLETE] Lock acquired for {torrent_id}")
                 torrent = self.torrents.get(torrent_id)
-                if not torrent: return
+                if not torrent:
+                    self.logger.error(f"[COMPLETE] Torrent {torrent_id} not found in manager!")
+                    return
 
                 # 1. Handle Missing Metadata (Unsorted Flow)
                 if not torrent.tmdb_id:
-                    self.logger.info(f"Torrent {torrent_id} finished but has NO metadata.")
-                    self.logger.info("Keeping in 'Unsorted' state. Add metadata via UI to finalize.")
+                    self.logger.info(f"[COMPLETE] Torrent {torrent_id} finished but has NO metadata.")
+                    self.logger.info("[COMPLETE] Keeping in 'Unsorted' state. Add metadata via UI to finalize.")
 
-                    # This line requires the states.py update
                     torrent.state = TorrentState.WAITING_FOR_METADATA
 
-                    # This line requires the queue_service.py update
+                    self.logger.info(f"[COMPLETE] Calling queue_service.mark_completed for {torrent_id}...")
                     self.queue_service.mark_completed(torrent_id)
+                    self.logger.info(f"[COMPLETE] queue_service.mark_completed finished for {torrent_id}.")
                     return
 
                 # 2. Standard Flow (Metadata exists)
+                self.logger.info(f"[COMPLETE] Metadata exists for {torrent_id}. Finalizing...")
                 torrent.state = TorrentState.FINISHED
 
                 # Schedule deletion from RD
@@ -400,26 +408,26 @@ class TorrentManager:
                 self.deletion_service.cleanup_temp_directory(torrent_id)
 
                 # Rotate queue
+                self.logger.info(f"[COMPLETE] Rotating queue for {torrent_id}...")
                 self.queue_service.mark_completed(torrent_id)
 
         except Exception as e:
             self.logger.error(f"CRITICAL ERROR in _on_download_complete for {torrent_id}: {e}", exc_info=True)
-            # Try to prevent the queue from stalling even if this crashes
             try:
                 self.queue_service.mark_completed(torrent_id)
             except:
                 pass
+        self.logger.info(f"[COMPLETE] _on_download_complete finished for {torrent_id}")
 
     def retry_import_with_metadata(self, torrent_id: str):
         """Called when user adds metadata to an Unsorted torrent."""
+        self.logger.info(f"[IMPORT] Retrying import for {torrent_id}...")
         with self.lock:
             torrent = self.torrents.get(torrent_id)
             if not torrent: return
 
             if torrent.state == TorrentState.WAITING_FOR_METADATA:
-                self.logger.info(f"Metadata added for {torrent_id}. Moving from Unsorted -> Library.")
-
-                # Run the move in a background thread
+                self.logger.info(f"[IMPORT] Metadata added for {torrent_id}. Moving from Unsorted -> Library.")
                 threading.Thread(target=self._run_move_job, args=(torrent,), daemon=True).start()
 
     def _run_move_job(self, torrent):
@@ -429,10 +437,10 @@ class TorrentManager:
         if success:
             with self.lock:
                 torrent.state = TorrentState.FINISHED
-                self.logger.info(f"Import complete for {torrent.id}.")
+                self.logger.info(f"[MOVE] Import complete for {torrent.id}.")
                 self.deletion_service.schedule_deletion(torrent.id)
         else:
-            self.logger.error(f"Failed to move {torrent.id} from unsorted.")
+            self.logger.error(f"[MOVE] Failed to move {torrent.id} from unsorted.")
 
     def on_download_progress(self, torrent_id: str, progress: float):
         with self.lock:
