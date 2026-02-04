@@ -241,7 +241,11 @@ class TorrentManager:
         try:
             info = self.rd.get_torrent_info(torrent_id)
             rd_status = info.get("status", "").lower()
-            torrent.name = info.get("filename", torrent.name)
+
+            # PER USER REQUEST: Only update name if it's missing or effectively empty
+            # This prevents overwriting or "jittering" the name during processing
+            if not torrent.name or torrent.name.startswith("magnet:"):
+                torrent.name = info.get("filename", torrent.name)
 
             # --- waiting / converting / queued states ---
             if rd_status == "waiting_files_selection":
@@ -320,34 +324,44 @@ class TorrentManager:
                 torrent.deleted_from_realdebrid = True
             else:
                 self.logger.warning(f"Error updating torrent {torrent_id}: {e}")
+        except Exception as e:
+            self.logger.error(f"Error updating torrent {torrent_id}: {e}", exc_info=True)
 
     def _try_auto_select_files(self, torrent_id: str, torrent: TorrentItem) -> bool:
         """Attempt automatic file selection."""
         files = torrent.files
         if not files: return False
 
+        # FIX: RealDebrid files have 'path', not 'name'. Derive name from path.
+        def get_filename(f_obj):
+            path = f_obj.get("path", "")
+            return path.split("/")[-1] if path else "unknown_file"
+
         if len(files) == 1:
             file_id = files[0]["id"]
+            file_name = get_filename(files[0])
             try:
                 self.rd.select_torrent_files(torrent_id, [file_id])
-                torrent.selected_files = [files[0]["name"]]
+                torrent.selected_files = [file_name]
                 torrent.custom_folder_name = None
                 torrent.state = TorrentState.WAITING_FOR_REALDEBRID
-                self.logger.info(f"[AUTO-SELECT] Selected single file for {torrent_id}")
+                self.logger.info(f"[AUTO-SELECT] Selected single file for {torrent_id}: {file_name}")
                 return True
             except RealDebridError:
                 return False
 
         media_extensions = {'.mkv', '.mp4'}
-        media_files = [f for f in files if any(f["name"].lower().endswith(ext) for ext in media_extensions)]
+        # FIX: Use get_filename helper here too
+        media_files = [f for f in files if any(get_filename(f).lower().endswith(ext) for ext in media_extensions)]
 
         if len(media_files) == 1:
+            file_name = get_filename(media_files[0])
             try:
                 self.rd.select_torrent_files(torrent_id, [media_files[0]["id"]])
-                torrent.selected_files = [media_files[0]["name"]]
+                torrent.selected_files = [file_name]
                 torrent.custom_folder_name = None
                 torrent.state = TorrentState.WAITING_FOR_REALDEBRID
-                self.logger.info(f"[AUTO-SELECT] Selected single media file for {torrent_id}")
+                self.logger.info(f"[AUTO-SELECT] Selected single media file for {torrent_id}: {file_name}")
                 return True
             except RealDebridError:
                 return False
