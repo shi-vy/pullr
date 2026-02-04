@@ -48,6 +48,10 @@ class TorrentItem:
     def __repr__(self):
         return f"<TorrentItem id={self.id} state={self.state} tmdb={self.tmdb_id}>"
 
+    @property
+    def download_started(self):
+        return self._download_started
+
 
 class TorrentManager:
     def __init__(self, rd_client: RealDebridClient, logger, poll_interval: int, config_data: dict):
@@ -329,7 +333,8 @@ class TorrentManager:
                     if (is_active
                             and torrent.state == TorrentState.AVAILABLE_FROM_REALDEBRID
                             and torrent.direct_links
-                            and not torrent._download_started):
+                            and not torrent.download_started):
+
                         torrent._download_started = True
                         self.logger.info(f"Triggering FileOps for ACTIVE torrent {torrent.id}...")
                         self.fileops.start_download(

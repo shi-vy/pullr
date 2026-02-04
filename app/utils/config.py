@@ -65,21 +65,26 @@ class Config:
     def _prepare_directories(self):
         temp_path = Path(self.data["download_temp_path"])
         media_path = Path(self.data["media_path"])
+        # Use config value or default to a subdirectory
+        unsorted_path = Path(self.data.get("unsorted_path", media_path / "unsorted"))
         logs_path = Path("/logs")
 
-        # If running locally (not Docker), map /downloads -> ./downloads, /media -> ./media
+        # If running locally (not Docker), map paths
         if not running_in_docker():
             if str(temp_path).startswith("/downloads"):
                 temp_path = Path.cwd() / "downloads/tmp"
             if str(media_path).startswith("/media"):
                 media_path = Path.cwd() / "media"
+                # Update unsorted path relative to new media path if it wasn't explicitly set
+                if "unsorted_path" not in self.data:
+                    unsorted_path = media_path / "unsorted"
             logs_path = Path.cwd() / "logs"
 
-            # Update paths in memory
             self.data["download_temp_path"] = str(temp_path)
             self.data["media_path"] = str(media_path)
+            self.data["unsorted_path"] = str(unsorted_path) # Store resolved path
 
-        for p in [temp_path, media_path, logs_path]:
+        for p in [temp_path, media_path, logs_path, unsorted_path]:
             p.mkdir(parents=True, exist_ok=True)
 
         # If Jellyfin mode, ensure subfolders exist
@@ -120,6 +125,10 @@ class Config:
     @property
     def media_path(self) -> str:
         return self.data.get("media_path")
+
+    @property
+    def unsorted_path(self) -> str:
+        return self.data.get("unsorted_path")
 
     @property
     def port(self) -> int:
