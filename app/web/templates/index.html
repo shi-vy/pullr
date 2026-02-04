@@ -7,9 +7,26 @@
 <body>
   <h1>🎬 Pullr Dashboard</h1>
 
-  <form id="add-form">
-    <input type="text" id="magnet-input" name="magnet" placeholder="Enter magnet link" required />
-    <button type="submit">Add</button>
+  <form id="add-form" style="display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; background: #252525; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+    <div style="flex-grow: 1;">
+        <label for="magnet-input" style="display: block; color: #ccc; margin-bottom: 5px; font-size: 0.9em;">Magnet Link</label>
+        <input type="text" id="magnet-input" name="magnet" placeholder="magnet:?xt=urn:btih:..." required style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #444; background: #333; color: white;" />
+    </div>
+
+    <div style="width: 120px;">
+        <label for="tmdb-input" style="display: block; color: #ccc; margin-bottom: 5px; font-size: 0.9em;">TMDB ID (Opt)</label>
+        <input type="text" id="tmdb-input" name="tmdb_id" placeholder="e.g. 12345" style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #444; background: #333; color: white;" />
+    </div>
+
+    <div style="width: 120px;">
+        <label for="type-input" style="display: block; color: #ccc; margin-bottom: 5px; font-size: 0.9em;">Media Type</label>
+        <select id="type-input" name="media_type" style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #444; background: #333; color: white;">
+            <option value="movie">Movie</option>
+            <option value="tv">TV Show</option>
+        </select>
+    </div>
+
+    <button type="submit" style="padding: 8px 16px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; height: 35px;">Add</button>
   </form>
 
   <div style="margin: 16px 0; padding: 12px; background: #1a1a1a; border: 1px solid #333; border-radius: 6px;">
@@ -83,6 +100,43 @@
   </div>
 
   <script>
+
+  // --- handle form submission without reload ---
+  const form = document.getElementById('add-form');
+  const input = document.getElementById('magnet-input');
+  const tmdbInput = document.getElementById('tmdb-input');
+  const typeInput = document.getElementById('type-input');
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const magnet = input.value.trim();
+    if (!magnet) return;
+
+    const tmdbId = tmdbInput.value.trim();
+    const mediaType = typeInput.value;
+
+    try {
+      const resp = await fetch('/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          magnet: magnet,
+          quick_download: quickDownloadToggle.checked.toString(),
+          tmdb_id: tmdbId,
+          media_type: mediaType
+        })
+      });
+      const data = await resp.json();
+      console.log('Torrent added:', data);
+    } catch (err) {
+      console.error('Error adding torrent:', err);
+    }
+
+    input.value = '';
+    tmdbInput.value = '';
+    typeInput.value = 'movie'; // Reset to default
+  });
+
   // --- Quick Download Mode State (persisted in localStorage) ---
   const quickDownloadToggle = document.getElementById('quickDownloadToggle');
 

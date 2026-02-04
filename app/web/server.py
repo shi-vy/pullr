@@ -28,13 +28,14 @@ async def dashboard(request: Request):
 
 
 @app.post("/add")
-async def add_magnet(magnet: str = Form(...), quick_download: str = Form("true")):
+async def add_magnet(magnet: str = Form(...), quick_download: str = Form("true"),
+                     tmdb_id: str = Form(None), media_type: str = Form(None)):
     if torrent_manager:
         quick = quick_download.lower() == "true"
-        tid = torrent_manager.add_magnet(magnet, quick_download=quick)
+        # Pass the new optional arguments to the manager
+        tid = torrent_manager.add_magnet(magnet, quick_download=quick, tmdb_id=tmdb_id, media_type=media_type)
         return {"status": "ok", "torrent_id": tid}
     return {"status": "error", "message": "manager not ready"}
-
 
 @app.post("/set_metadata/{torrent_id}")
 async def set_metadata(torrent_id: str, tmdb_id: str = Form(...), media_type: str = Form(...)):

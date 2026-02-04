@@ -60,17 +60,13 @@ class TorrentManager:
 
         self.running = False
         self.torrents: Dict[str, TorrentItem] = {}
-
         self.lock = threading.RLock()
-
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
 
         # Initialize Services
         self.queue_service = QueueService(self.torrents, self.lock, logger)
         self.deletion_service = DeletionService(rd_client, self.torrents, self.lock, logger, config_data)
-
-        # ADDED: Metadata Service
         self.metadata_service = MetadataService(config_data.get("tmdb_api_key"), logger)
 
         self.external_service = ExternalTorrentService(
@@ -106,10 +102,11 @@ class TorrentManager:
             self.thread.join(timeout=5)
             self.logger.info("Torrent polling loop stopped.")
 
-    def add_magnet(self, magnet_link: str, quick_download: bool = True):
+    def add_magnet(self, magnet_link: str, quick_download: bool = True, tmdb_id: str = None, media_type: str = None):
         """Add a new magnet link to RealDebrid and queue."""
         try:
-            self.logger.info(f"[ADD] Adding magnet link: {magnet_link[:60]}... (quick={quick_download})")
+            self.logger.info(
+                f"Adding magnet link: {magnet_link[:60]}... (quick={quick_download}, tmdb={tmdb_id}, type={media_type})")
             result = self.rd.add_magnet(magnet_link)
             torrent_id = result.get("id")
             if not torrent_id:
@@ -119,13 +116,28 @@ class TorrentManager:
             item.id = torrent_id
             item.state = TorrentState.WAITING_FOR_REALDEBRID
 
+            # Set Metadata if provided
+            if tmdb_id and tmdb_id.strip():
+                item.tmdb_id = tmdb_id.strip()
+                item.media_type = media_type if media_type else "movie"
+
+                # Fetch Title immediately so fileops has it later
+                if hasattr(self, 'metadata_service'):
+                    try:
+                        title = self.metadata_service.fetch_metadata(item.tmdb_id, item.media_type)
+                        if title:
+                            item.tmdb_title = title
+                            self.logger.info(f"[ADD] Fetched TMDB title: '{title}'")
+                    except Exception as e:
+                        self.logger.warning(f"[ADD] Failed to fetch TMDB title: {e}")
+
             with self.lock:
                 self.torrents[torrent_id] = item
 
             # Mark as known to prevent re-import by external service
             self.external_service.mark_as_known(torrent_id)
 
-            # Add to queue (passing ID to match external service usage)
+            # Add to queue
             self.queue_service.add_to_queue(torrent_id)
 
             self.logger.info(f"[ADD] Successfully added {torrent_id}")
