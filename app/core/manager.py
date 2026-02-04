@@ -212,7 +212,8 @@ class TorrentManager:
 
         if torrent.state in (TorrentState.FINISHED, TorrentState.FAILED,
                              TorrentState.DOWNLOADING_FROM_REALDEBRID,
-                             TorrentState.TRANSFERRING_TO_MEDIA_SERVER):
+                             TorrentState.TRANSFERRING_TO_MEDIA_SERVER,
+                             TorrentState.WAITING_FOR_METADATA):
             return
 
         if torrent.deleted_from_realdebrid:
