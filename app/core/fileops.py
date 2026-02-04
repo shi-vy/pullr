@@ -1,28 +1,75 @@
-import os
 import shutil
-import threading
-import time
-from pathlib import Path
-from urllib.parse import unquote
+import os
 import re
-import requests
+from urllib.parse import unquote
+from pathlib import Path
 from core.states import TorrentState
 
 
 class FileOps:
-    """Handles downloading and transferring files for torrents."""
-
     def __init__(self, logger):
         self.logger = logger
 
+    def _strip_filename_pattern(self, filename: str, pattern: str) -> str:
+        """Strip a specific pattern from the start of a filename."""
+        if not pattern:
+            return filename
+
+        # Escape the pattern for regex, but allow flexibility
+        escaped_pattern = re.escape(pattern)
+        # Regex: Start of string, optional whitespace, pattern, optional whitespace
+        regex = f"^{escaped_pattern}\\s*"
+
+        new_name = re.sub(regex, "", filename, flags=re.IGNORECASE)
+        if new_name != filename:
+            self.logger.info(f"Stripped pattern '{pattern}': {filename} -> {new_name}")
+        return new_name
+
     def start_download(self, torrent, config, on_complete, on_progress=None, on_transfer=None):
-        """Starts downloading in a separate thread."""
-        thread = threading.Thread(
-            target=self._process_torrent,
-            args=(torrent, config, on_complete, on_progress, on_transfer),
-            daemon=True
-        )
-        thread.start()
+        """Starts the download process in a background thread."""
+        import threading
+        t = threading.Thread(target=self._process_torrent,
+                             args=(torrent, config, on_complete, on_progress, on_transfer))
+        t.daemon = True
+        t.start()
+
+    def _get_dest_info(self, torrent, config):
+        """Helper to determine destination path components based on metadata."""
+        base_media_path = Path(config["media_path"])
+        tmdb_id = getattr(torrent, 'tmdb_id', None)
+
+        if not tmdb_id:
+            # Unsorted Logic
+            unsorted_str = config.get("unsorted_path")
+            if unsorted_str:
+                dest_root = Path(unsorted_str)
+            else:
+                dest_root = base_media_path / "unsorted"
+
+            # For unsorted, we just use the torrent name or custom folder
+            folder_name = torrent.custom_folder_name if torrent.custom_folder_name else (torrent.name or torrent.id)
+            folder_name = re.sub(r'[<>:"/\\|?*]', " ", folder_name).strip()
+
+            return dest_root, folder_name
+
+        # Metadata Logic
+        media_type = getattr(torrent, 'media_type', 'unknown').lower()
+
+        # 1. Determine Root Subfolder (Shows vs Movies)
+        if media_type == 'tv':
+            subdir = "Shows"
+        elif media_type == 'movie':
+            subdir = "Movies"
+        else:
+            subdir = "Others"
+
+        dest_root = base_media_path / subdir
+
+        # 2. Determine Folder Name: "Title [tmdbid-12345]"
+        clean_name = re.sub(r'[<>:"/\\|?*]', " ", torrent.name).strip()
+        folder_name = f"{clean_name} [tmdbid-{tmdb_id}]"
+
+        return dest_root, folder_name
 
     def _process_torrent(self, torrent, config, on_complete, on_progress, on_transfer):
         try:
@@ -36,235 +83,161 @@ class FileOps:
 
             # --- 1. DOWNLOAD PHASE ---
             for i, url in enumerate(torrent.direct_links, start=1):
-                # Extract filename
                 raw_name = url.split("/")[-1].split("?")[0]
                 filename = unquote(raw_name)
 
-                # Apply strip pattern
                 if torrent.filename_strip_pattern:
                     filename = self._strip_filename_pattern(filename, torrent.filename_strip_pattern)
 
-                # Sanitize
                 filename = re.sub(r'[<>:"/\\|?*]', "_", filename)
-
                 dest = temp_path / filename
                 self.logger.info(f"Downloading file {i}/{len(torrent.direct_links)}: {filename}")
                 self._download_file(url, dest,
                                     on_progress=lambda p: on_progress(torrent.id, p) if on_progress else None)
 
             # --- 2. ROUTING PHASE ---
-            # Update state
             torrent.state = TorrentState.TRANSFERRING_TO_MEDIA_SERVER
             if on_transfer:
                 on_transfer(torrent.id)
 
-            # Check for Metadata to determine destination
-            tmdb_id = getattr(torrent, 'tmdb_id', None)
+            # Use helper to get consistent paths
+            dest_root, target_folder_name = self._get_dest_info(torrent, config)
 
-            if tmdb_id:
-                # Metadata exists -> Standard Media Path
-                base_media_path = Path(config["media_path"])
-                media_type = getattr(torrent, 'media_type', 'unknown')
+            self.logger.info(f"Routing {torrent.id} to: {dest_root} / {target_folder_name}")
 
-                if media_type == 'movie':
-                    dest_root = base_media_path / "movies"
-                elif media_type == 'tv':
-                    dest_root = base_media_path / "tv"
-                else:
-                    dest_root = base_media_path
-
-                self.logger.info(f"Torrent {torrent.id} has TMDB ID {tmdb_id} ({media_type}). Moving to: {dest_root}")
-            else:
-                # No Metadata -> Unsorted Path
-                # Use config value or default to 'unsorted' subdir in media path
-                unsorted_str = config.get("unsorted_path")
-                if unsorted_str:
-                    dest_root = Path(unsorted_str)
-                else:
-                    dest_root = Path(config["media_path"]) / "unsorted"
-
-                self.logger.info(f"Torrent {torrent.id} has NO metadata. Moving to Unsorted: {dest_root}")
-
-            dest_root.mkdir(parents=True, exist_ok=True)
+            # Destination is the specific folder for this media
+            final_dest_dir = dest_root / target_folder_name
+            final_dest_dir.mkdir(parents=True, exist_ok=True)
 
             # --- 3. TRANSFER PHASE ---
             files_in_temp = list(temp_path.iterdir())
 
             if len(files_in_temp) == 1 and files_in_temp[0].is_file():
-                # Single file
+                # Single file -> Move INTO the final folder
                 file = files_in_temp[0]
-                target = dest_root / file.name
+                target = final_dest_dir / file.name
                 self.logger.info(f"Transferring single file: {file} -> {target}")
                 shutil.move(str(file), target)
             else:
-                # Multiple files
-                folder_name = torrent.custom_folder_name if torrent.custom_folder_name else torrent.id
-                folder_name = re.sub(r'[<>:"/\\|?*]', "_", folder_name)
+                # Multiple files -> Move CONTENTS into the final folder
+                # Note: If we downloaded a structure like "Season 1/Ep1.mkv", it preserves that structure
+                self.logger.info(f"Transferring {len(files_in_temp)} items to: {final_dest_dir}")
+                for item in files_in_temp:
+                    target = final_dest_dir / item.name
+                    if target.exists():
+                        if target.is_dir():
+                            shutil.rmtree(target)
+                        else:
+                            target.unlink()
+                    shutil.move(str(item), str(target))
 
-                target_folder = dest_root / folder_name
-                self.logger.info(f"Transferring multiple files to folder: {target_folder}")
-
-                if target_folder.exists():
-                    self.logger.warning(f"Target folder {target_folder} already exists, removing it first")
-                    shutil.rmtree(target_folder)
-
-                shutil.move(str(temp_path), str(target_folder))
-                temp_path = None
-
-            # Cleanup
-            if temp_path and temp_path.exists():
-                temp_path.rmdir()
+            # Cleanup temp
+            if temp_path.exists():
+                shutil.rmtree(temp_path, ignore_errors=True)
 
             torrent.state = TorrentState.FINISHED
             self.logger.info(f"Torrent {torrent.id} finished successfully.")
             on_complete(torrent.id)
 
         except Exception as e:
-            self.logger.error(f"FileOps error for {torrent.id}: {e}")
+            self.logger.error(f"FileOps error for {torrent.id}: {e}", exc_info=True)
             torrent.state = TorrentState.FAILED
             on_complete(torrent.id)
 
     def move_from_unsorted(self, torrent, config):
         """Move a finished torrent from Unsorted to the final Media Library."""
         try:
-            # Resolve Unsorted Path
+            # 1. Source Determination
             unsorted_str = config.get("unsorted_path")
             if unsorted_str:
                 unsorted_root = Path(unsorted_str)
             else:
                 unsorted_root = Path(config["media_path"]) / "unsorted"
 
-            # Resolve Destination based on Media Type
+            # Identify source name (sanitized)
+            folder_name_in_unsorted = torrent.custom_folder_name if torrent.custom_folder_name else (
+                        torrent.name or torrent.id)
+            folder_name_in_unsorted = re.sub(r'[<>:"/\\|?*]', " ", folder_name_in_unsorted).strip()
+
+            source_path = unsorted_root / folder_name_in_unsorted
+
+            # Fallback: Check for single file if folder not found (common for single-file torrents)
+            if not source_path.exists() and torrent.files:
+                # Try the name of the first file (this matches how _process_torrent handles single files in Unsorted)
+                first_file_name = torrent.files[0]['path'].lstrip('/')
+                # Sanitize filename as _process_torrent would have
+                sanitized_file_name = re.sub(r'[<>:"/\\|?*]', "_", first_file_name)
+
+                potential_path = unsorted_root / sanitized_file_name
+                if potential_path.exists():
+                    source_path = potential_path
+
+            if not source_path.exists():
+                self.logger.error(f"Cannot find source in Unsorted: {source_path}")
+                return False
+
+            # 2. Destination Determination (Reuse Helper logic manually or call it if refactored, doing manually here for clarity)
             base_media_path = Path(config["media_path"])
-            media_type = getattr(torrent, 'media_type', 'unknown')
+            media_type = getattr(torrent, 'media_type', 'unknown').lower()
+            tmdb_id = getattr(torrent, 'tmdb_id', '0')
 
-            if media_type == 'movie':
-                dest_root = base_media_path / "movies"
-            elif media_type == 'tv':
-                dest_root = base_media_path / "tv"
+            if media_type == 'tv':
+                dest_subdir = "Shows"
+            elif media_type == 'movie':
+                dest_subdir = "Movies"
             else:
-                dest_root = base_media_path
+                dest_subdir = "Others"
 
-            dest_root.mkdir(parents=True, exist_ok=True)
+            # Naming: Name [tmdbid-ID]
+            clean_name = re.sub(r'[<>:"/\\|?*]', " ", torrent.name).strip()
+            new_folder_name = f"{clean_name} [tmdbid-{tmdb_id}]"
 
-            # Determine folder/file name
-            folder_name = torrent.custom_folder_name if torrent.custom_folder_name else torrent.id
-            folder_name = re.sub(r'[<>:"/\\|?*]', "_", folder_name)
+            dest_folder = base_media_path / dest_subdir / new_folder_name
+            dest_folder.mkdir(parents=True, exist_ok=True)
 
-            source_path = unsorted_root / folder_name
-            target_path = dest_root / folder_name
+            self.logger.info(f"Moving from {source_path} to {dest_folder}")
 
-            if not source_path.exists():
-                # Fallback check for single files (if they weren't put in a folder)
-                possible_file = unsorted_root / torrent.files[0]['path'].lstrip('/') if torrent.files else None
-                if possible_file and possible_file.exists():
-                    source_path = possible_file
-                    target_path = dest_root / source_path.name
+            # 3. Execution
+            destination = dest_folder / source_path.name
+
+            if destination.exists():
+                self.logger.warning(f"Destination {destination} exists. Overwriting.")
+                if destination.is_dir():
+                    shutil.rmtree(destination)
                 else:
-                    self.logger.error(f"Cannot find source path {source_path} in unsorted.")
-                    return False
+                    destination.unlink()
 
-            self.logger.info(f"Moving {source_path} -> {target_path}")
-
-            # Move logic
-            if target_path.exists():
-                self.logger.warning(f"Target {target_path} exists. Overwriting.")
-                if target_path.is_dir():
-                    shutil.rmtree(target_path)
-                else:
-                    target_path.unlink()
-
-            shutil.move(str(source_path), str(target_path))
+            shutil.move(str(source_path), str(destination))
             return True
 
         except Exception as e:
-            self.logger.error(f"Error moving from unsorted: {e}")
+            self.logger.error(f"Error moving from unsorted: {e}", exc_info=True)
             return False
 
-    def _strip_filename_pattern(self, filename: str, pattern: str) -> str:
-        if not pattern or not filename:
-            return filename
-        if filename.lower().startswith(pattern.lower()):
-            cleaned = filename[len(pattern):].lstrip()
-            self.logger.info(f"Stripped pattern '{pattern}': '{filename}' -> '{cleaned}'")
-            return cleaned
-        return filename
+    def _download_file(self, url, dest_path, on_progress=None):
+        import requests
+        import time
 
-    def _download_file(self, url: str, dest: Path, on_progress=None, max_retries: int = 3,
-                       chunk_size: int = 1024 * 1024):
-        for attempt in range(1, max_retries + 1):
-            try:
-                with requests.get(url, stream=True, timeout=30) as r:
-                    r.raise_for_status()
-                    total = int(r.headers.get("content-length", 0))
-                    downloaded = 0
-                    start_time = time.time()
-                    last_logged_percent = -20
-
-                    with open(dest, "wb") as f:
-                        for chunk in r.iter_content(chunk_size=chunk_size):
-                            if chunk:
-                                f.write(chunk)
-                                downloaded += len(chunk)
-                                if total:
-                                    pct = downloaded / total * 100
-                                    if pct >= last_logged_percent + 20 or pct >= 100:
-                                        elapsed = time.time() - start_time
-                                        rate = downloaded / (elapsed + 1e-6) / (1024 * 1024)
-                                        self.logger.info(
-                                            f"{dest.name}: {pct:.1f}% ({downloaded / (1024 * 1024):.2f} MB) @ {rate:.2f} MB/s")
-                                        last_logged_percent = int(pct / 20) * 20
-                                    if on_progress:
-                                        on_progress(pct)
-                    return
-            except Exception as e:
-                self.logger.warning(f"Download attempt {attempt}/{max_retries} failed: {e}")
-                if attempt == max_retries:
-                    raise
-                time.sleep(3 * attempt)
-
-    def move_from_unsorted(self, torrent, config):
-        """Move a finished torrent from Unsorted to the final Media Library."""
         try:
-            # Resolve Unsorted Path
-            unsorted_str = config.get("unsorted_path")
-            if unsorted_str:
-                unsorted_root = Path(unsorted_str)
-            else:
-                unsorted_root = Path(config["media_path"]) / "unsorted"
+            with requests.get(url, stream=True) as r:
+                r.raise_for_status()
+                total_length = r.headers.get('content-length')
 
-            dest_root = Path(config["media_path"])
-
-            # Determine folder/file name
-            folder_name = torrent.custom_folder_name if torrent.custom_folder_name else torrent.id
-            folder_name = re.sub(r'[<>:"/\\|?*]', "_", folder_name)
-
-            source_path = unsorted_root / folder_name
-            target_path = dest_root / folder_name
-
-            if not source_path.exists():
-                # Fallback check for single files (if they weren't put in a folder)
-                possible_file = unsorted_root / torrent.files[0]['path'].lstrip('/') if torrent.files else None
-                if possible_file and possible_file.exists():
-                    source_path = possible_file
-                    target_path = dest_root / source_path.name
-                else:
-                    self.logger.error(f"Cannot find source path {source_path} in unsorted.")
-                    return False
-
-            self.logger.info(f"Moving {source_path} -> {target_path}")
-
-            # Move logic
-            if target_path.exists():
-                self.logger.warning(f"Target {target_path} exists. Overwriting.")
-                if target_path.is_dir():
-                    shutil.rmtree(target_path)
-                else:
-                    target_path.unlink()
-
-            shutil.move(str(source_path), str(target_path))
-            return True
-
+                with open(dest_path, 'wb') as f:
+                    if total_length is None:
+                        f.write(r.content)
+                    else:
+                        dl = 0
+                        total_length = int(total_length)
+                        start_time = time.time()
+                        for chunk in r.iter_content(chunk_size=8192):
+                            if chunk:
+                                dl += len(chunk)
+                                f.write(chunk)
+                                if on_progress:
+                                    percent = (dl / total_length) * 100
+                                    # Basic throttling of progress updates
+                                    if int(time.time() * 10) % 5 == 0:
+                                        on_progress(percent)
         except Exception as e:
-            self.logger.error(f"Error moving from unsorted: {e}")
-            return False
+            raise e
