@@ -11,6 +11,7 @@ else
     MEDIA_GID := 1000
 endif
 
+export BRANCH
 export MEDIA_UID
 export MEDIA_GID
 

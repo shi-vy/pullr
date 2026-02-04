@@ -7,12 +7,28 @@
 <body>
   <h1>🎬 Pullr Dashboard</h1>
 
-  <form id="add-form">
-    <input type="text" id="magnet-input" name="magnet" placeholder="Enter magnet link" required />
-    <button type="submit">Add</button>
+  <form id="add-form" style="display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; background: #252525; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+    <div style="flex-grow: 1;">
+        <label for="magnet-input" style="display: block; color: #ccc; margin-bottom: 5px; font-size: 0.9em;">Magnet Link</label>
+        <input type="text" id="magnet-input" name="magnet" placeholder="magnet:?xt=urn:btih:..." required style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #444; background: #333; color: white;" />
+    </div>
+
+    <div style="width: 120px;">
+        <label for="tmdb-input" style="display: block; color: #ccc; margin-bottom: 5px; font-size: 0.9em;">TMDB ID (Opt)</label>
+        <input type="text" id="tmdb-input" name="tmdb_id" placeholder="e.g. 12345" style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #444; background: #333; color: white;" />
+    </div>
+
+    <div style="width: 120px;">
+        <label for="type-input" style="display: block; color: #ccc; margin-bottom: 5px; font-size: 0.9em;">Media Type</label>
+        <select id="type-input" name="media_type" style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #444; background: #333; color: white;">
+            <option value="movie">Movie</option>
+            <option value="tv" selected>TV Show</option>
+        </select>
+    </div>
+
+    <button type="submit" style="padding: 8px 16px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; height: 35px;">Add</button>
   </form>
 
-  <!-- Quick Download Mode Toggle -->
   <div style="margin: 16px 0; padding: 12px; background: #1a1a1a; border: 1px solid #333; border-radius: 6px;">
     <label style="display: flex; align-items: center; cursor: pointer; user-select: none;">
       <input type="checkbox" id="quickDownloadToggle" checked style="width: 20px; height: 20px; margin-right: 12px; cursor: pointer;">
@@ -56,7 +72,6 @@
                  style="width:100%; padding:10px; background:#252525; color:#eee; border:1px solid #444; border-radius:6px;">
         </div>
 
-        <!-- Collapsible Options Section -->
         <div id="optionsSection" style="margin: 20px 0;">
           <button type="button" id="toggleOptionsBtn" class="gray" style="width:100%; text-align:left; padding:12px; font-size:0.95em;">
             ⚙️ Options (click to expand)
@@ -85,49 +100,55 @@
   </div>
 
   <script>
-  // --- Quick Download Mode State (persisted in localStorage) ---
+  // --- Quick Download Mode State ---
   const quickDownloadToggle = document.getElementById('quickDownloadToggle');
-
-  // Load saved preference or default to true
   const savedQuickDownload = localStorage.getItem('quickDownloadMode');
   if (savedQuickDownload !== null) {
     quickDownloadToggle.checked = savedQuickDownload === 'true';
   }
-
-  // Save preference when changed
   quickDownloadToggle.addEventListener('change', () => {
     localStorage.setItem('quickDownloadMode', quickDownloadToggle.checked);
-    console.log('Quick Download Mode:', quickDownloadToggle.checked ? 'enabled' : 'disabled');
   });
 
-  // --- handle form submission without reload ---
+  // --- Handle Add Form ---
   const form = document.getElementById('add-form');
   const input = document.getElementById('magnet-input');
+  const tmdbInput = document.getElementById('tmdb-input');
+  const typeInput = document.getElementById('type-input');
 
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const magnet = input.value.trim();
-    if (!magnet) return;
+  if (form) {
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const magnet = input.value.trim();
+        if (!magnet) return;
 
-    try {
-      const resp = await fetch('/add', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          magnet: magnet,
-          quick_download: quickDownloadToggle.checked.toString()
-        })
+        const tmdbId = tmdbInput ? tmdbInput.value.trim() : '';
+        const mediaType = typeInput ? typeInput.value : 'movie';
+
+        try {
+          const resp = await fetch('/add', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+              magnet: magnet,
+              quick_download: quickDownloadToggle.checked.toString(),
+              tmdb_id: tmdbId,
+              media_type: mediaType
+            })
+          });
+          const data = await resp.json();
+          console.log('Torrent added:', data);
+        } catch (err) {
+          console.error('Error adding torrent:', err);
+        }
+
+        // Clear inputs
+        input.value = '';
+        if (tmdbInput) tmdbInput.value = '';
       });
-      const data = await resp.json();
-      console.log('Torrent added:', data);
-    } catch (err) {
-      console.error('Error adding torrent:', err);
-    }
+  }
 
-    input.value = '';
-  });
-
-  // --- live updates via websocket ---
+  // --- WebSocket & Dashboard Logic ---
   const manualTableBody = document.getElementById('manualTorrentTable');
   const externalTableBody = document.getElementById('externalTorrentTable');
   const colorMap = {
@@ -137,89 +158,69 @@
       WAITING_IN_QUEUE: "orange",
       TRANSFERRING_TO_MEDIA_SERVER: "violet",
       FINISHED: "lime",
-      FAILED: "red"
+      FAILED: "red",
+      WAITING_FOR_METADATA: "magenta"
     };
+
   const ws = new WebSocket("ws://" + window.location.host + "/ws");
 
   ws.onmessage = (event) => {
     const data = JSON.parse(event.data);
-    console.log("Received update:", data);
-
-    // Handle both old format (direct torrents object) and new format (manual/external)
     const manualTorrents = data.manual || {};
     const externalTorrents = data.external || {};
-
-    // Populate manual torrents table
     populateTable(manualTableBody, manualTorrents, false);
-
-    // Populate external torrents table
     populateTable(externalTableBody, externalTorrents, true);
   };
 
   function populateTable(tableBody, torrents, isExternal) {
     tableBody.innerHTML = "";
-
-    // Sort by queue position (active first, then by queue position)
     const sortedEntries = Object.entries(torrents).sort((a, b) => {
       const [idA, infoA] = a;
       const [idB, infoB] = b;
-
-      // Active torrent always first
       if (infoA.is_active && !infoB.is_active) return -1;
       if (!infoA.is_active && infoB.is_active) return 1;
-
-      // Then by queue position
-      const queueA = infoA.queue_position || 999999;
-      const queueB = infoB.queue_position || 999999;
-      return queueA - queueB;
+      return (infoA.queue_position || 999999) - (infoB.queue_position || 999999);
     });
 
     for (const [id, info] of sortedEntries) {
       const row = document.createElement("tr");
       const stateName = info.state.replace("TorrentState.", "");
 
-      // Queue position display
-      let queueDisplay = "";
-      if (info.is_active) {
-        queueDisplay = "▶️ Active";
-      } else if (info.queue_position) {
-        queueDisplay = `#${info.queue_position}`;
-      } else {
-        queueDisplay = "—";
-      }
+      let queueDisplay = info.is_active ? "▶️ Active" : (info.queue_position ? `#${info.queue_position}` : "—");
 
-      // Display name or files
       let displayName = isExternal ? info.name : id;
       if (info.selected_files && info.selected_files.length > 0) {
         displayName = info.selected_files.join('<br>');
       }
 
-      // Format progress display if downloading
-      const progressDisplay =
-        stateName === "DOWNLOADING_FROM_REALDEBRID" && info.progress > 0
-          ? ` (${info.progress.toFixed(1)}%)`
-          : "";
+      const progressDisplay = stateName === "DOWNLOADING_FROM_REALDEBRID" && info.progress > 0
+          ? ` (${info.progress.toFixed(1)}%)` : "";
 
       let stateHTML = `<span style="color:${colorMap[stateName] || "white"}">${stateName}${progressDisplay}</span>`;
 
-      // Show error message if present
+      if (info.tmdb_id) {
+          stateHTML += `<br><span style="color:#4caf50; font-size:0.8em; border:1px solid #4caf50; border-radius:4px; padding:1px 4px; margin-top:2px; display:inline-block;">TAGGED: ${info.tmdb_id}</span>`;
+      }
       if (info.error_message) {
         stateHTML += `<br><span style="color:red; font-size:0.9em;">⚠️ ${info.error_message}</span>`;
       }
 
-      // Render file selection UI if waiting for selection (manual torrents only)
+      // Buttons
+      // 1. Select Files Button (Manual only, when waiting)
       if (!isExternal && stateName === "WAITING_FOR_SELECTION" && info.files && info.files.length > 0) {
-        stateHTML += `
-          <button onclick="openFileModal('${id}', ${JSON.stringify(info.files).replace(/"/g, "&quot;")})">
-            Select Files
-          </button>`;
+        stateHTML += `<div style="margin-top:4px;"><button onclick="openFileModal('${id}', ${JSON.stringify(info.files).replace(/"/g, "&quot;")})">Select Files</button></div>`;
+      }
+
+      // 2. Metadata Button (All torrents)
+      // FIX: Enabled for manual torrents so you can fix WAITING_FOR_METADATA state
+      if (stateName !== "FINISHED" && stateName !== "FAILED") {
+         stateHTML += `<div style="margin-top:4px;"><button onclick="addMetadata('${id}')" style="font-size:0.8em;">${info.tmdb_id ? '✏️ Edit TMDB' : '➕ Add TMDB'}</button></div>`;
       }
 
       row.innerHTML = `<td>${queueDisplay}</td><td>${displayName}</td><td>${stateHTML}</td>`;
       tableBody.appendChild(row);
     }
 
-    // Show "No torrents" message if table is empty
     if (sortedEntries.length === 0) {
       const row = document.createElement("tr");
       row.innerHTML = `<td colspan="3" style="text-align:center; color:#666; font-style:italic;">No torrents yet</td>`;
@@ -227,11 +228,36 @@
     }
   }
 
+  // --- Add/Edit Metadata Function ---
+  async function addMetadata(torrentId) {
+      const tmdbId = prompt("Enter TMDB ID (e.g., 12345):");
+      if (!tmdbId) return;
+
+      let mediaType = prompt("Enter Media Type (movie or tv):", "movie");
+      if (!mediaType) return;
+      mediaType = mediaType.toLowerCase().trim();
+
+      try {
+          const resp = await fetch(`/set_metadata/${torrentId}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: new URLSearchParams({ tmdb_id: tmdbId, media_type: mediaType })
+          });
+          const data = await resp.json();
+          if(data.status === 'ok') console.log("Metadata updated");
+          else alert("Failed: " + data.message);
+      } catch (e) {
+          console.error(e);
+          alert("Error updating metadata");
+      }
+  }
+
   ws.onclose = () => {
     console.log("WebSocket closed. Reconnecting...");
     setTimeout(() => location.reload(), 2000);
   };
 
+  // --- File Selection Modal Logic ---
   const modal = document.getElementById("fileModal");
   const modalTitle = document.getElementById("modalTitle");
   const fileList = document.getElementById("fileList");
@@ -242,11 +268,9 @@
   const toggleOptionsBtn = document.getElementById("toggleOptionsBtn");
   const optionsContent = document.getElementById("optionsContent");
   const downloadSelectedBtn = document.getElementById("downloadSelectedBtn");
-  const selectAllBtn = document.getElementById("selectAllBtn");
   let currentTorrentId = null;
   let totalFiles = 0;
 
-  // Toggle options section
   toggleOptionsBtn.addEventListener("click", () => {
     const isHidden = optionsContent.style.display === "none";
     optionsContent.style.display = isHidden ? "block" : "none";
@@ -270,24 +294,18 @@
 
     folderNameInput.value = "";
     stripPatternInput.value = "";
-
-    // Reset options section to collapsed
     optionsContent.style.display = "none";
     toggleOptionsBtn.textContent = "⚙️ Options (click to expand)";
 
-    // Show folder name section only if more than 1 file total
     if (totalFiles > 1) {
       folderNameSection.style.display = "block";
     } else {
       folderNameSection.style.display = "none";
     }
 
-    // Add event listeners to checkboxes to update button states
     document.querySelectorAll(".file-checkbox").forEach(cb => {
       cb.addEventListener("change", updateButtonStates);
     });
-
-    // Add event listener to folder name input
     folderNameInput.addEventListener("input", updateButtonStates);
 
     modal.style.display = "block";
@@ -297,15 +315,12 @@
   function updateButtonStates() {
     const selectedCount = document.querySelectorAll("#fileList input:checked").length;
     const folderName = folderNameInput.value.trim();
-
-    // If multiple files selected, require folder name
     if (selectedCount > 1) {
       const isValid = folderName.length > 0;
       downloadSelectedBtn.disabled = !isValid;
       downloadSelectedBtn.style.opacity = isValid ? "1" : "0.5";
       downloadSelectedBtn.style.cursor = isValid ? "pointer" : "not-allowed";
     } else {
-      // Single file or no selection - no folder name needed for submit button
       downloadSelectedBtn.disabled = selectedCount === 0;
       downloadSelectedBtn.style.opacity = selectedCount > 0 ? "1" : "0.5";
       downloadSelectedBtn.style.cursor = selectedCount > 0 ? "pointer" : "not-allowed";
@@ -313,102 +328,54 @@
   }
 
   document.getElementById("selectAllBtn").onclick = () => {
-    // Select all checkboxes
-    document.querySelectorAll(".file-checkbox").forEach(cb => {
-      cb.checked = true;
-    });
-
-    // Update button states after selecting all
+    document.querySelectorAll(".file-checkbox").forEach(cb => cb.checked = true);
     updateButtonStates();
-
-    // Focus on folder name input if multiple files
-    if (totalFiles > 1) {
-      folderNameInput.focus();
-    }
+    if (totalFiles > 1) folderNameInput.focus();
   };
 
   document.getElementById("cancelBtn").onclick = () => {
     modal.style.display = "none";
-    fileList.innerHTML = "";
-    folderNameInput.value = "";
-    stripPatternInput.value = "";
-    folderNameSection.style.display = "none";
-    optionsContent.style.display = "none";
-    toggleOptionsBtn.textContent = "⚙️ Options (click to expand)";
     currentTorrentId = null;
-    totalFiles = 0;
   };
 
   fileForm.onsubmit = (e) => {
     e.preventDefault();
-    const selected = Array.from(document.querySelectorAll("#fileList input:checked"))
-      .map(cb => cb.value)
-      .join(",");
+    const selected = Array.from(document.querySelectorAll("#fileList input:checked")).map(cb => cb.value).join(",");
+    if (!selected) return alert("Please select at least one file!");
 
-    if (!selected) {
-      alert("Please select at least one file!");
-      return;
-    }
-
-    const selectedCount = document.querySelectorAll("#fileList input:checked").length;
     const folderName = folderNameInput.value.trim();
     const stripPattern = stripPatternInput.value.trim();
 
-    // Validate: if multiple files selected, folder name is required
-    if (selectedCount > 1 && !folderName) {
-      alert("Please provide a custom folder name for multiple files!");
-      return;
+    if (document.querySelectorAll("#fileList input:checked").length > 1 && !folderName) {
+      return alert("Please provide a custom folder name for multiple files!");
     }
 
     const params = new URLSearchParams({ files: selected });
-    if (folderName && selectedCount > 1) {
-      params.append("folder_name", folderName);
-    }
-    if (stripPattern) {
-      params.append("strip_pattern", stripPattern);
-    }
+    if (folderName) params.append("folder_name", folderName);
+    if (stripPattern) params.append("strip_pattern", stripPattern);
 
     fetch(`/select_files/${currentTorrentId}`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: params
-    })
-      .then(() => {
-        console.log(`Selected files [${selected}] for ${currentTorrentId}`);
-        if (stripPattern) {
-          console.log(`Applied strip pattern: ${stripPattern}`);
-        }
+    }).then(() => {
         modal.style.display = "none";
-        fileList.innerHTML = "";
-        folderNameInput.value = "";
-        stripPatternInput.value = "";
-        folderNameSection.style.display = "none";
-        optionsContent.style.display = "none";
-        toggleOptionsBtn.textContent = "⚙️ Options (click to expand)";
         currentTorrentId = null;
-        totalFiles = 0;
-      })
-      .catch(err => alert("File selection failed: " + err));
+    }).catch(err => alert("File selection failed: " + err));
   };
+
+  async function showVersion() {
+    try {
+      const resp = await fetch('/version');
+      const data = await resp.json();
+      document.getElementById('version-footer').textContent = `Pullr – ${data.branch} @ ${data.commit}`;
+    } catch (e) {}
+  }
+  showVersion();
   </script>
 
   <footer id="version-footer" style="text-align:center; margin-top:1em; color:#666; font-size:0.9em;">
     Loading version info...
   </footer>
-
-  <script>
-  async function showVersion() {
-    try {
-      const resp = await fetch('/version');
-      const data = await resp.json();
-      const footer = document.getElementById('version-footer');
-      footer.textContent = `Pullr – ${data.branch} @ ${data.commit}`;
-    } catch (e) {
-      console.error("Failed to fetch version info:", e);
-    }
-  }
-  showVersion();
-  </script>
-
 </body>
 </html>

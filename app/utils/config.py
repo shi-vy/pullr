@@ -57,25 +57,40 @@ class Config:
         if scan_interval is not None and not isinstance(scan_interval, (int, float)):
             raise ConfigError("external_torrent_scan_interval_seconds must be a number")
 
+        # Validate Jellyfin mode requirements
+        if self.data.get("jellyfin_mode", False):
+            if not self.data.get("tmdb_api_key"):
+                raise ConfigError("tmdb_api_key is required when jellyfin_mode is enabled")
+
     def _prepare_directories(self):
         temp_path = Path(self.data["download_temp_path"])
         media_path = Path(self.data["media_path"])
+        # Use config value or default to a subdirectory
+        unsorted_path = Path(self.data.get("unsorted_path", media_path / "unsorted"))
         logs_path = Path("/logs")
 
-        # If running locally (not Docker), map /downloads -> ./downloads, /media -> ./media
+        # If running locally (not Docker), map paths
         if not running_in_docker():
             if str(temp_path).startswith("/downloads"):
                 temp_path = Path.cwd() / "downloads/tmp"
             if str(media_path).startswith("/media"):
                 media_path = Path.cwd() / "media"
+                # Update unsorted path relative to new media path if it wasn't explicitly set
+                if "unsorted_path" not in self.data:
+                    unsorted_path = media_path / "unsorted"
             logs_path = Path.cwd() / "logs"
 
-            # Update paths in memory
             self.data["download_temp_path"] = str(temp_path)
             self.data["media_path"] = str(media_path)
+            self.data["unsorted_path"] = str(unsorted_path) # Store resolved path
 
-        for p in [temp_path, media_path, logs_path]:
+        for p in [temp_path, media_path, logs_path, unsorted_path]:
             p.mkdir(parents=True, exist_ok=True)
+
+        # If Jellyfin mode, ensure subfolders exist
+        if self.jellyfin_mode:
+            (media_path / "Shows").mkdir(exist_ok=True)
+            (media_path / "Movies").mkdir(exist_ok=True)
 
         # Verify media path writable
         test_file = Path(self.data["media_path"]) / ".pullr_write_test"
@@ -112,6 +127,10 @@ class Config:
         return self.data.get("media_path")
 
     @property
+    def unsorted_path(self) -> str:
+        return self.data.get("unsorted_path")
+
+    @property
     def port(self) -> int:
         return int(self.data.get("port", 8080))
 
@@ -126,6 +145,14 @@ class Config:
         if interval is None:
             return 0
         return int(interval) if interval > 0 else 0
+
+    @property
+    def jellyfin_mode(self) -> bool:
+        return bool(self.data.get("jellyfin_mode", False))
+
+    @property
+    def tmdb_api_key(self) -> str | None:
+        return self.data.get("tmdb_api_key")
 
     def __repr__(self):
         return f"<Config path={self.path} keys={list(self.data.keys())}>"

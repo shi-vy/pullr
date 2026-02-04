@@ -1,4 +1,4 @@
-FROM python:3.13-slim
+FROM python:3.14-slim
 
 ARG BRANCH=main
 ARG REPO_URL=https://github.com/shi-vy/pullr.git
@@ -7,7 +7,10 @@ ARG MEDIA_GID=1000
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+# Install git and 7zip for archive extraction
+RUN apt-get update && \
+    apt-get install -y git 7zip && \
+    rm -rf /var/lib/apt/lists/*
 
 # Create media group and user with configurable UID/GID
 RUN groupadd -g ${MEDIA_GID} media && \
