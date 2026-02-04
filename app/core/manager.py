@@ -19,7 +19,7 @@ class TorrentItem:
         self.name = None
         self.source = source  # "manual" or "external"
         self.quick_download = quick_download
-        self.state = TorrentState.SENT_TO_REALDEBRID
+        self.state = TorrentState.WAITING_FOR_REALDEBRID
         self.last_update = time.time()
         self.direct_links = []
         self.progress = 0.0
@@ -367,30 +367,28 @@ class TorrentManager:
             else:
                 torrent.state = TorrentState.AVAILABLE_FROM_REALDEBRID
 
-    # 1. Update the _on_download_complete method
+    # In TorrentManager class
     def _on_download_complete(self, torrent_id: str):
-        """Called when download is finished."""
-        self.logger.info(f"Torrent {torrent_id} download finished.")
+        """Called when a torrent completes (success or failure)."""
+        self.logger.info(f"FileOps finished for {torrent_id}")
 
         with self.lock:
             torrent = self.torrents.get(torrent_id)
-            if not torrent:
-                return
+            if not torrent: return
 
-            # Check if we are missing metadata
+            # 1. Handle Missing Metadata (Unsorted Flow)
             if not torrent.tmdb_id:
                 self.logger.info(f"Torrent {torrent_id} finished but has NO metadata.")
                 self.logger.info("Keeping in 'Unsorted' state. Add metadata via UI to finalize.")
 
                 torrent.state = TorrentState.WAITING_FOR_METADATA
 
-                # We still mark it as 'completed' in the QueueService so the NEXT download can start
+                # IMPORTANT: We mark it 'completed' in the queue so the NEXT download can start
+                # but we do NOT schedule deletion or remove it from the list.
                 self.queue_service.mark_completed(torrent_id)
-
-                # We do NOT schedule deletion yet because we want you to manage it
                 return
 
-            # If we DO have metadata, standard cleanup
+            # 2. Standard Flow (Metadata exists)
             torrent.state = TorrentState.FINISHED
 
             # Schedule deletion from RD
@@ -398,9 +396,10 @@ class TorrentManager:
                 self.deletion_service.schedule_deletion(torrent_id)
 
             self.deletion_service.cleanup_temp_directory(torrent_id)
+
+            # Rotate queue
             self.queue_service.mark_completed(torrent_id)
 
-    # 2. Add this NEW method to TorrentManager class
     def retry_import_with_metadata(self, torrent_id: str):
         """Called when user adds metadata to an Unsorted torrent."""
         with self.lock:
@@ -410,7 +409,7 @@ class TorrentManager:
             if torrent.state == TorrentState.WAITING_FOR_METADATA:
                 self.logger.info(f"Metadata added for {torrent_id}. Moving from Unsorted -> Library.")
 
-                # Run the move in a background thread to avoid blocking web request
+                # Run the move in a background thread
                 threading.Thread(target=self._run_move_job, args=(torrent,), daemon=True).start()
 
     def _run_move_job(self, torrent):
@@ -421,7 +420,6 @@ class TorrentManager:
             with self.lock:
                 torrent.state = TorrentState.FINISHED
                 self.logger.info(f"Import complete for {torrent.id}.")
-                # Now we can schedule cleanup
                 self.deletion_service.schedule_deletion(torrent.id)
         else:
             self.logger.error(f"Failed to move {torrent.id} from unsorted.")

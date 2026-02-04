@@ -185,5 +185,5 @@ class QueueService:
                 self.active_torrent_id = None
                 self.logger.info(f"Torrent {torrent_id} marked complete. Queue slot freed.")
 
-            # We trigger the next update cycle immediately
-            # (The manager loop will pick up the next item automatically)
+            # Logic to verify queue rotation (optional, but good practice)
+            # The manager loop calls get_next_active() automatically, so clearing active_id is enough.

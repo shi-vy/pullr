@@ -45,12 +45,11 @@ async def set_metadata(torrent_id: str, tmdb_id: str = Form(...)):
         if not torrent:
             raise HTTPException(status_code=404, detail="Torrent not found")
 
-        old_tmdb = torrent.tmdb_id
         torrent.tmdb_id = tmdb_id.strip()
-        logger.info(f"Updated metadata for {torrent_id}: {old_tmdb} -> {torrent.tmdb_id}")
+        if logger:
+            logger.info(f"Updated metadata for {torrent_id}: TMDB ID = {torrent.tmdb_id}")
 
-        # CHECK: Is this torrent sitting in the Unsorted waiting room?
-        # If so, trigger the move immediately.
+        # TRIGGER: If waiting in Unsorted, move it now
         if torrent.state == TorrentState.WAITING_FOR_METADATA:
             torrent_manager.retry_import_with_metadata(torrent_id)
 

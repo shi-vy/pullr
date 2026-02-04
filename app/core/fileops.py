@@ -157,10 +157,10 @@ class FileOps:
                     raise
                 time.sleep(3 * attempt)
 
-    # Add this new method to the FileOps class
     def move_from_unsorted(self, torrent, config):
         """Move a finished torrent from Unsorted to the final Media Library."""
         try:
+            # Resolve Unsorted Path
             unsorted_str = config.get("unsorted_path")
             if unsorted_str:
                 unsorted_root = Path(unsorted_str)
@@ -169,7 +169,7 @@ class FileOps:
 
             dest_root = Path(config["media_path"])
 
-            # Determine the source folder/file
+            # Determine folder/file name
             folder_name = torrent.custom_folder_name if torrent.custom_folder_name else torrent.id
             folder_name = re.sub(r'[<>:"/\\|?*]', "_", folder_name)
 
@@ -177,17 +177,24 @@ class FileOps:
             target_path = dest_root / folder_name
 
             if not source_path.exists():
-                # Check if it was a single file download (might be sitting directly in root)
-                # This is a basic check, might need refinement depending on how your single files are named
-                # For now, we assume the folder structure created during download
-                self.logger.error(f"Cannot find source path {source_path} in unsorted.")
-                return False
+                # Fallback check for single files (if they weren't put in a folder)
+                possible_file = unsorted_root / torrent.files[0]['path'].lstrip('/') if torrent.files else None
+                if possible_file and possible_file.exists():
+                    source_path = possible_file
+                    target_path = dest_root / source_path.name
+                else:
+                    self.logger.error(f"Cannot find source path {source_path} in unsorted.")
+                    return False
 
             self.logger.info(f"Moving {source_path} -> {target_path}")
 
+            # Move logic
             if target_path.exists():
                 self.logger.warning(f"Target {target_path} exists. Overwriting.")
-                shutil.rmtree(target_path)
+                if target_path.is_dir():
+                    shutil.rmtree(target_path)
+                else:
+                    target_path.unlink()
 
             shutil.move(str(source_path), str(target_path))
             return True
