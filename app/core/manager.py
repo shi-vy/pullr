@@ -47,7 +47,6 @@ class TorrentItem:
 
 
 class TorrentManager:
-    # PRESERVED: Your original dependency injection signature
     def __init__(self, rd_client: RealDebridClient, logger, poll_interval: int, config_data: dict):
         self.rd = rd_client
         self.logger = logger
@@ -62,9 +61,13 @@ class TorrentManager:
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
 
-        # PRESERVED: Your original service initialization
+        # Initialize Services
         self.queue_service = QueueService(self.torrents, self.lock, logger)
+
+        # Deletion Service (No start/stop needed based on your code)
         self.deletion_service = DeletionService(rd_client, self.torrents, self.lock, logger, config_data)
+
+        # External Service
         self.external_service = ExternalTorrentService(
             rd_client,
             self.torrents,
@@ -86,10 +89,8 @@ class TorrentManager:
         self.thread.start()
         self.logger.info("Starting TorrentManager polling thread with queue system...")
 
-        # Start services
-        self.deletion_service.start()
-        # Ensure external service scanning is started if needed
-        # (Assuming your external service handles its own threading or is polled in loop)
+        # NOTE: deletion_service and external_service do not need explicit start()
+        # calls as their logic is invoked within the poll loop or handled internally.
 
     def stop(self):
         """Stops the polling loop cleanly."""
@@ -98,8 +99,6 @@ class TorrentManager:
         self.logger.info("Stopping TorrentManager polling thread...")
         self.running = False
         self.stop_event.set()
-
-        self.deletion_service.stop()
 
         if self.thread:
             self.thread.join(timeout=5)
@@ -113,15 +112,20 @@ class TorrentManager:
             torrent_id = result.get("id")
             if not torrent_id:
                 raise RealDebridError("No torrent ID returned from RealDebrid.")
+
             item = TorrentItem(magnet_link, source="manual", quick_download=quick_download)
             item.id = torrent_id
             item.state = TorrentState.WAITING_FOR_REALDEBRID
+
             with self.lock:
                 self.torrents[torrent_id] = item
 
-            # Mark as known and add to queue
+            # Mark as known to prevent re-import by external service
             self.external_service.mark_as_known(torrent_id)
-            self.queue_service.add_to_queue(item)  # NOTE: Changed from ID to item based on usage patterns
+
+            # Add to queue (passing ID to match external service usage)
+            self.queue_service.add_to_queue(torrent_id)
+
             return torrent_id
         except RealDebridError as e:
             self.logger.error(f"Failed to add magnet: {e}")
@@ -141,7 +145,7 @@ class TorrentManager:
             deletion_info = self.deletion_service.get_deletion_time_remaining(tid)
 
             torrent_data = {
-                "id": t.id,  # Ensure ID is present
+                "id": t.id,
                 "state": str(t.state),
                 "progress": t.progress,
                 "name": t.name or tid,
@@ -152,7 +156,7 @@ class TorrentManager:
                 "is_active": is_active,
                 "error_message": t.error_message,
                 "deletion_in": deletion_info,
-                "tmdb_id": t.tmdb_id,  # ADDED: return tmdb_id to UI
+                "tmdb_id": t.tmdb_id,  # Return tmdb_id to UI
                 "source": t.source
             }
 
@@ -170,36 +174,22 @@ class TorrentManager:
         self.logger.info("Torrent polling loop started.")
         while not self.stop_event.is_set():
             try:
+                # 1. Process Queue
                 self._process_queue()
+
+                # 2. Process Deletions
                 self.deletion_service.process_pending_deletions()
 
+                # 3. Scan for External Torrents
                 if self.external_service.should_scan():
-                    self.external_service.scan_for_external_torrents(self._on_external_found)
+                    # No arguments needed; service updates shared torrents dict directly
+                    self.external_service.scan_for_external_torrents()
 
             except Exception as e:
                 self.logger.warning(f"Polling loop error: {e}")
+
             time.sleep(self.poll_interval)
         self.logger.info("Torrent polling loop stopped.")
-
-    def _on_external_found(self, torrent_info):
-        """Callback for external service to add torrents."""
-        # This matches the signature expected by ExternalTorrentService
-        tid = torrent_info["id"]
-        with self.lock:
-            if tid in self.torrents:
-                return
-            item = TorrentItem(magnet_link="", source="external", quick_download=True)
-            item.id = tid
-            item.name = torrent_info["filename"]
-            # Try to fetch files immediately
-            try:
-                info = self.rd.get_torrent_info(tid)
-                item.files = info.get("files", [])
-            except:
-                pass
-            self.torrents[tid] = item
-            self.queue_service.add_to_queue(item)
-            self.logger.info(f"Imported external torrent {tid}")
 
     def _process_queue(self):
         """Process the queue."""
@@ -231,16 +221,14 @@ class TorrentManager:
         try:
             info = self.rd.get_torrent_info(torrent_id)
             rd_status = info.get("status", "").lower()
-            torrent.name = info.get("filename", torrent.name)  # Update name
+            torrent.name = info.get("filename", torrent.name)
 
             # --- waiting / converting / queued states ---
             if rd_status == "waiting_files_selection":
                 if torrent.source == "external":
+                    # External torrents are auto-selected by the external service
+                    # or RD logic, but we update state here.
                     torrent.state = TorrentState.WAITING_FOR_REALDEBRID
-                    # External torrents should eventually be selected by RD logic or user,
-                    # but we can try auto-select if stuck
-                    if torrent.quick_download:
-                        self._try_auto_select_files(torrent_id, torrent)
                 else:
                     try:
                         files_info = self.rd.list_torrent_files(torrent_id)
@@ -282,10 +270,10 @@ class TorrentManager:
                         else:
                             self._attempt_unrestrict(torrent_id, torrent, links)
 
-                    # --- MODIFIED LOGIC START ---
+                    # --- UNBLOCKING LOGIC ---
                     # Check if Active + Links + Not Started.
-                    # REMOVED the "waiting for TMDB metadata" check.
-                    # The download will proceed, and FileOps will handle the routing (Media vs Unsorted).
+                    # We do NOT check for tmdb_id here, allowing the download to proceed.
+                    # FileOps will route to "Unsorted" if metadata is missing.
                     if (is_active
                             and torrent.state == TorrentState.AVAILABLE_FROM_REALDEBRID
                             and torrent.direct_links
@@ -302,7 +290,6 @@ class TorrentManager:
                             on_progress=self.on_download_progress,
                             on_transfer=lambda tid=torrent.id: self.on_transfer_complete(tid)
                         )
-                    # --- MODIFIED LOGIC END ---
 
                     elif not is_active and torrent.direct_links:
                         torrent.state = TorrentState.WAITING_IN_QUEUE
@@ -321,7 +308,6 @@ class TorrentManager:
 
     def _try_auto_select_files(self, torrent_id: str, torrent: TorrentItem) -> bool:
         """Attempt automatic file selection."""
-        # ... (Preserved from your original file)
         files = torrent.files
         if not files: return False
 
@@ -353,7 +339,6 @@ class TorrentManager:
 
     def _attempt_unrestrict(self, torrent_id: str, torrent: TorrentItem, links: list[str]):
         """Try to unrestrict RD links."""
-        # ... (Preserved from your original file)
         direct_links = []
         all_failed_hoster_unavailable = True
 
