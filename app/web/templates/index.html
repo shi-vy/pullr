@@ -206,11 +206,14 @@
       }
 
       // Buttons
+      // 1. Select Files Button (Manual only, when waiting)
       if (!isExternal && stateName === "WAITING_FOR_SELECTION" && info.files && info.files.length > 0) {
         stateHTML += `<div style="margin-top:4px;"><button onclick="openFileModal('${id}', ${JSON.stringify(info.files).replace(/"/g, "&quot;")})">Select Files</button></div>`;
       }
 
-      if (isExternal && stateName !== "FINISHED" && stateName !== "FAILED") {
+      // 2. Metadata Button (All torrents)
+      // FIX: Enabled for manual torrents so you can fix WAITING_FOR_METADATA state
+      if (stateName !== "FINISHED" && stateName !== "FAILED") {
          stateHTML += `<div style="margin-top:4px;"><button onclick="addMetadata('${id}')" style="font-size:0.8em;">${info.tmdb_id ? '✏️ Edit TMDB' : '➕ Add TMDB'}</button></div>`;
       }
 
