@@ -32,23 +32,19 @@ class FileOps:
                 on_progress(torrent.id, 0.0)
 
             temp_path = Path(config["download_temp_path"]) / torrent.id
-
-            # Ensure temp path exists
             temp_path.mkdir(parents=True, exist_ok=True)
 
-            # Download loop
+            # --- 1. DOWNLOAD PHASE ---
             for i, url in enumerate(torrent.direct_links, start=1):
-                # Extract the raw filename from URL
+                # Extract filename
                 raw_name = url.split("/")[-1].split("?")[0]
-
-                # Decode URL-encoded characters like %20, %28, etc.
                 filename = unquote(raw_name)
 
-                # Apply filename strip pattern if provided
+                # Apply strip pattern
                 if torrent.filename_strip_pattern:
                     filename = self._strip_filename_pattern(filename, torrent.filename_strip_pattern)
 
-                # Sanitize filename to avoid filesystem issues
+                # Sanitize
                 filename = re.sub(r'[<>:"/\\|?*]', "_", filename)
 
                 dest = temp_path / filename
@@ -56,21 +52,22 @@ class FileOps:
                 self._download_file(url, dest,
                                     on_progress=lambda p: on_progress(torrent.id, p) if on_progress else None)
 
-            # Update state before transfer
+            # --- 2. ROUTING PHASE ---
+            # Update state
             torrent.state = TorrentState.TRANSFERRING_TO_MEDIA_SERVER
             if on_transfer:
                 on_transfer(torrent.id)
 
-            # --- ROUTING LOGIC START ---
-            # Check if we have metadata to determine destination
-            # We use getattr in case the attribute hasn't been initialized on the object yet
+            # Check for Metadata to determine destination
             tmdb_id = getattr(torrent, 'tmdb_id', None)
 
             if tmdb_id:
+                # Metadata exists -> Standard Media Path
                 dest_root = Path(config["media_path"])
                 self.logger.info(f"Torrent {torrent.id} has TMDB ID {tmdb_id}. Moving to Media Library.")
             else:
-                # Fallback to a default 'unsorted' folder if not defined in config
+                # No Metadata -> Unsorted Path
+                # Use config value or default to 'unsorted' subdir in media path
                 unsorted_str = config.get("unsorted_path")
                 if unsorted_str:
                     dest_root = Path(unsorted_str)
@@ -80,37 +77,32 @@ class FileOps:
                 self.logger.info(f"Torrent {torrent.id} has NO metadata. Moving to Unsorted: {dest_root}")
 
             dest_root.mkdir(parents=True, exist_ok=True)
-            # --- ROUTING LOGIC END ---
 
-            # Check if we have multiple files
+            # --- 3. TRANSFER PHASE ---
             files_in_temp = list(temp_path.iterdir())
 
             if len(files_in_temp) == 1 and files_in_temp[0].is_file():
-                # Single file: move directly to destination root
+                # Single file
                 file = files_in_temp[0]
                 target = dest_root / file.name
                 self.logger.info(f"Transferring single file: {file} -> {target}")
                 shutil.move(str(file), target)
             else:
-                # Multiple files: create a subfolder in destination
-                # Use custom folder name if provided, otherwise fall back to torrent.id
+                # Multiple files
                 folder_name = torrent.custom_folder_name if torrent.custom_folder_name else torrent.id
-                # Sanitize folder name
                 folder_name = re.sub(r'[<>:"/\\|?*]', "_", folder_name)
 
                 target_folder = dest_root / folder_name
                 self.logger.info(f"Transferring multiple files to folder: {target_folder}")
 
-                # Move the entire temp folder to destination
                 if target_folder.exists():
                     self.logger.warning(f"Target folder {target_folder} already exists, removing it first")
                     shutil.rmtree(target_folder)
 
                 shutil.move(str(temp_path), str(target_folder))
-                # temp_path is now gone, so we can't rmdir it
                 temp_path = None
 
-            # Clean up temp directory if it still exists
+            # Cleanup
             if temp_path and temp_path.exists():
                 temp_path.rmdir()
 
@@ -123,40 +115,17 @@ class FileOps:
             torrent.state = TorrentState.FAILED
             on_complete(torrent.id)
 
-    # ------------------------------
-    # Helper: strip filename pattern
-    # ------------------------------
     def _strip_filename_pattern(self, filename: str, pattern: str) -> str:
-        """
-        Strip a pattern from the start of a filename and clean up leftover whitespace.
-
-        Args:
-            filename: Original filename
-            pattern: Pattern to strip from the start (case-insensitive)
-
-        Returns:
-            Cleaned filename with pattern removed and whitespace stripped
-        """
         if not pattern or not filename:
             return filename
-
-        # Case-insensitive check if filename starts with pattern
         if filename.lower().startswith(pattern.lower()):
-            # Remove the pattern from the start
-            cleaned = filename[len(pattern):]
-            # Strip any leading whitespace
-            cleaned = cleaned.lstrip()
-            self.logger.info(f"Stripped pattern '{pattern}' from filename: '{filename}' -> '{cleaned}'")
+            cleaned = filename[len(pattern):].lstrip()
+            self.logger.info(f"Stripped pattern '{pattern}': '{filename}' -> '{cleaned}'")
             return cleaned
-
         return filename
 
-    # ------------------------------
-    # Helper: download with retries
-    # ------------------------------
     def _download_file(self, url: str, dest: Path, on_progress=None, max_retries: int = 3,
                        chunk_size: int = 1024 * 1024):
-        """Stream a file to disk with retries and reduced logging."""
         for attempt in range(1, max_retries + 1):
             try:
                 with requests.get(url, stream=True, timeout=30) as r:
@@ -164,31 +133,26 @@ class FileOps:
                     total = int(r.headers.get("content-length", 0))
                     downloaded = 0
                     start_time = time.time()
-                    last_logged_percent = -20  # Start at -20 so 0% gets logged
+                    last_logged_percent = -20
 
                     with open(dest, "wb") as f:
                         for chunk in r.iter_content(chunk_size=chunk_size):
                             if chunk:
                                 f.write(chunk)
                                 downloaded += len(chunk)
-
                                 if total:
                                     pct = downloaded / total * 100
-
-                                    # Only log every 20% or at completion
                                     if pct >= last_logged_percent + 20 or pct >= 100:
                                         elapsed = time.time() - start_time
                                         rate = downloaded / (elapsed + 1e-6) / (1024 * 1024)
                                         self.logger.info(
-                                            f"{dest.name}: {pct:.1f}% ({downloaded / (1024 * 1024):.2f} MB) @ {rate:.2f} MB/s"
-                                        )
+                                            f"{dest.name}: {pct:.1f}% ({downloaded / (1024 * 1024):.2f} MB) @ {rate:.2f} MB/s")
                                         last_logged_percent = int(pct / 20) * 20
-
                                     if on_progress:
                                         on_progress(pct)
-                    return  # success
+                    return
             except Exception as e:
-                self.logger.warning(f"Download attempt {attempt}/{max_retries} failed for {url}: {e}")
+                self.logger.warning(f"Download attempt {attempt}/{max_retries} failed: {e}")
                 if attempt == max_retries:
                     raise
                 time.sleep(3 * attempt)
