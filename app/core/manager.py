@@ -8,6 +8,7 @@ from core.states import TorrentState
 from core.realdebrid import RealDebridClient, RealDebridError
 from core.fileops import FileOps
 from core.services import QueueService, DeletionService, ExternalTorrentService
+from core.services.metadata_service import MetadataService
 
 
 class TorrentItem:
@@ -34,9 +35,10 @@ class TorrentItem:
         self.deleted_from_realdebrid = False
         self.completion_time = None
 
-        # ADDED: TMDB ID and Media Type fields
+        # ADDED: TMDB ID, Type, and Title
         self.tmdb_id = None
         self.media_type = None  # 'movie' or 'tv'
+        self.tmdb_title = None  # The official title from TMDB
 
     def schedule_unrestrict_retry(self):
         self.unrestrict_backoff = min(int(self.unrestrict_backoff * 2), 600)
@@ -59,8 +61,6 @@ class TorrentManager:
         self.running = False
         self.torrents: Dict[str, TorrentItem] = {}
 
-        # CRITICAL FIX: Use RLock (Re-entrant Lock) to prevent deadlocks when
-        # manager calls services that also need the lock.
         self.lock = threading.RLock()
 
         self.stop_event = threading.Event()
@@ -68,11 +68,11 @@ class TorrentManager:
 
         # Initialize Services
         self.queue_service = QueueService(self.torrents, self.lock, logger)
-
-        # Deletion Service
         self.deletion_service = DeletionService(rd_client, self.torrents, self.lock, logger, config_data)
 
-        # External Service
+        # ADDED: Metadata Service
+        self.metadata_service = MetadataService(config_data.get("tmdb_api_key"), logger)
+
         self.external_service = ExternalTorrentService(
             rd_client,
             self.torrents,
@@ -428,6 +428,16 @@ class TorrentManager:
             if not torrent: return
 
             if torrent.state == TorrentState.WAITING_FOR_METADATA:
+                # FETCH TITLE from TMDB if missing
+                if torrent.tmdb_id and torrent.media_type and not torrent.tmdb_title:
+                    try:
+                        title = self.metadata_service.fetch_metadata(torrent.tmdb_id, torrent.media_type)
+                        if title:
+                            torrent.tmdb_title = title
+                            self.logger.info(f"[IMPORT] Fetched TMDB title: '{title}'")
+                    except Exception as e:
+                        self.logger.warning(f"[IMPORT] Failed to fetch TMDB title: {e}")
+
                 self.logger.info(f"[IMPORT] Metadata added for {torrent_id}. Moving from Unsorted -> Library.")
                 threading.Thread(target=self._run_move_job, args=(torrent,), daemon=True).start()
 

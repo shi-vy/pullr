@@ -66,10 +66,72 @@ class FileOps:
         dest_root = base_media_path / subdir
 
         # 2. Determine Folder Name: "Title [tmdbid-12345]"
-        clean_name = re.sub(r'[<>:"/\\|?*]', " ", torrent.name).strip()
+        # FIX: Prefer the official TMDB Title if available
+        if hasattr(torrent, 'tmdb_title') and torrent.tmdb_title:
+            raw_name = torrent.tmdb_title
+        else:
+            raw_name = torrent.name
+
+        clean_name = re.sub(r'[<>:"/\\|?*]', " ", raw_name).strip()
         folder_name = f"{clean_name} [tmdbid-{tmdb_id}]"
 
         return dest_root, folder_name
+
+    def move_from_unsorted(self, torrent, config):
+        """Move a finished torrent from Unsorted to the final Media Library."""
+        try:
+            # 1. Source Determination
+            unsorted_str = config.get("unsorted_path")
+            if unsorted_str:
+                unsorted_root = Path(unsorted_str)
+            else:
+                unsorted_root = Path(config["media_path"]) / "unsorted"
+
+            # Identify source name (sanitized)
+            folder_name_in_unsorted = torrent.custom_folder_name if torrent.custom_folder_name else (
+                        torrent.name or torrent.id)
+            folder_name_in_unsorted = re.sub(r'[<>:"/\\|?*]', " ", folder_name_in_unsorted).strip()
+
+            source_path = unsorted_root / folder_name_in_unsorted
+
+            # Fallback: Check for single file if folder not found
+            if not source_path.exists() and torrent.files:
+                first_file_name = torrent.files[0]['path'].lstrip('/')
+                sanitized_file_name = re.sub(r'[<>:"/\\|?*]', "_", first_file_name)
+
+                potential_path = unsorted_root / sanitized_file_name
+                if potential_path.exists():
+                    source_path = potential_path
+
+            if not source_path.exists():
+                self.logger.error(f"Cannot find source in Unsorted: {source_path}")
+                return False
+
+            # 2. Destination Determination
+            # Use the helper to get the canonical folder name
+            dest_root, dest_folder_name = self._get_dest_info(torrent, config)
+
+            dest_folder = dest_root / dest_folder_name
+            dest_folder.mkdir(parents=True, exist_ok=True)
+
+            self.logger.info(f"Moving from {source_path} to {dest_folder}")
+
+            # 3. Execution
+            destination = dest_folder / source_path.name
+
+            if destination.exists():
+                self.logger.warning(f"Destination {destination} exists. Overwriting.")
+                if destination.is_dir():
+                    shutil.rmtree(destination)
+                else:
+                    destination.unlink()
+
+            shutil.move(str(source_path), str(destination))
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Error moving from unsorted: {e}", exc_info=True)
+            return False
 
     def _process_torrent(self, torrent, config, on_complete, on_progress, on_transfer):
         try:
