@@ -98,13 +98,21 @@ class QueueService:
             return len(self.queue)
 
     def mark_completed(self, torrent_id: str):
-        """Mark a torrent as complete and advance the queue."""
+        """Mark a torrent as complete and remove it from the queue."""
         self.logger.info(f"[QUEUE] mark_completed called for {torrent_id}. Waiting for lock...")
         with self.lock:
             self.logger.info(f"[QUEUE] Lock acquired for mark_completed {torrent_id}.")
+
+            # Clear active status if it matches
             if self.active_torrent_id == torrent_id:
                 self.active_torrent_id = None
-                self.logger.info(f"[QUEUE] Torrent {torrent_id} marked complete. Queue slot freed.")
+                self.logger.info(f"[QUEUE] Torrent {torrent_id} cleared from active status.")
+
+            # Remove from the queue deque
+            if torrent_id in self.queue:
+                self.queue.remove(torrent_id)
+                self.logger.info(f"[QUEUE] Torrent {torrent_id} removed from queue.")
             else:
-                self.logger.info(f"[QUEUE] mark_completed: {torrent_id} was NOT the active torrent ({self.active_torrent_id}).")
+                self.logger.info(f"[QUEUE] Torrent {torrent_id} was not in queue list.")
+
         self.logger.info(f"[QUEUE] mark_completed finished for {torrent_id}.")

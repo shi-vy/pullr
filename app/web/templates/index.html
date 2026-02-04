@@ -249,24 +249,39 @@
   // --- Metadata Function ---
   async function addMetadata(torrentId) {
       const tmdbId = prompt("Enter TMDB ID (e.g., 12345):");
-      if (tmdbId) {
-          try {
-              const resp = await fetch(`/set_metadata/${torrentId}`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                  body: new URLSearchParams({ tmdb_id: tmdbId })
-              });
-              const data = await resp.json();
-              if(data.status === 'ok') {
-                  console.log("Metadata updated");
-                  // No need to reload, WebSocket will push the update
-              } else {
-                  alert("Failed to update: " + data.message);
-              }
-          } catch (e) {
-              console.error(e);
-              alert("Error updating metadata");
+      if (!tmdbId) return;
+
+      let mediaType = prompt("Enter Media Type (movie or tv):", "movie");
+      if (!mediaType) return;
+
+      // Normalize input
+      mediaType = mediaType.toLowerCase().trim();
+      if (mediaType === 'series' || mediaType === 'show') mediaType = 'tv';
+      if (mediaType === 'film') mediaType = 'movie';
+
+      if (mediaType !== 'movie' && mediaType !== 'tv') {
+          alert("Invalid media type. Please enter 'movie' or 'tv'.");
+          return;
+      }
+
+      try {
+          const resp = await fetch(`/set_metadata/${torrentId}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: new URLSearchParams({
+                  tmdb_id: tmdbId,
+                  media_type: mediaType
+              })
+          });
+          const data = await resp.json();
+          if(data.status === 'ok') {
+              console.log("Metadata updated");
+          } else {
+              alert("Failed to update: " + data.message);
           }
+      } catch (e) {
+          console.error(e);
+          alert("Error updating metadata");
       }
   }
 
