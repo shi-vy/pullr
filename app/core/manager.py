@@ -254,15 +254,18 @@ class TorrentManager:
                 else:
                     try:
                         files_info = self.rd.list_torrent_files(torrent_id)
-                        torrent.files = files_info.get("files", [])
-
+                        raw_files = files_info.get("files", [])
+                        for f in raw_files:
+                            if "path" in f and "name" not in f:
+                                # e.g., "/Video.mp4" -> "Video.mp4"
+                                f["name"] = f["path"].split("/")[-1]
+                        torrent.files = raw_files
                         auto_selected = False
                         if torrent.quick_download:
                             auto_selected = self._try_auto_select_files(torrent_id, torrent)
 
                         if not auto_selected:
                             torrent.state = TorrentState.WAITING_FOR_SELECTION
-
                     except RealDebridError as e:
                         self.logger.warning(f"Failed to list files for {torrent_id}: {e}")
                         torrent.state = TorrentState.WAITING_FOR_REALDEBRID
