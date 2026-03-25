@@ -1,6 +1,8 @@
 import threading
 import time
 import random
+import os
+import shutil
 from typing import Dict, Optional
 from datetime import datetime
 
@@ -146,6 +148,34 @@ class TorrentManager:
             self.logger.error(f"[ADD] Failed to add magnet: {e}")
             return None
 
+    def get_disk_usage(self):
+        """Get disk space information for configured paths."""
+        temp_path = self.config_data.get("download_temp_path")
+        media_path = self.config_data.get("media_path")
+
+        usage = {}
+        for label, path in [("Temp", temp_path), ("Media", media_path)]:
+            if path and os.path.exists(path):
+                try:
+                    total, used, free = shutil.disk_usage(path)
+                    usage[label] = {
+                        "total": self._format_bytes(total),
+                        "used": self._format_bytes(used),
+                        "free": self._format_bytes(free),
+                        "percent": round((used / total) * 100, 1)
+                    }
+                except Exception as e:
+                    self.logger.warning(f"Failed to get disk usage for {path}: {e}")
+        return usage
+
+    def _format_bytes(self, size):
+        """Format bytes into human-readable string."""
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if size < 1024.0:
+                return f"{size:.1f} {unit}"
+            size /= 1024.0
+        return f"{size:.1f} PB"
+
     def get_status(self):
         """Return a snapshot of current torrent states."""
         # self.logger.debug("[STATUS] Acquiring lock for status snapshot...")
@@ -183,7 +213,8 @@ class TorrentManager:
 
         return {
             "manual": manual_torrents,
-            "external": external_torrents
+            "external": external_torrents,
+            "disk_usage": self.get_disk_usage()
         }
 
     def _poll_loop(self):
