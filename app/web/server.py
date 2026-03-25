@@ -111,6 +111,14 @@ async def select_files(torrent_id: str, files: str = Form(...), folder_name: str
         return {"status": "error", "error": str(e)}
 
 
+@app.get("/search_tmdb")
+async def search_tmdb(query: str):
+    if not torrent_manager or not torrent_manager.metadata_service:
+        return {"status": "error", "message": "Metadata service not ready"}
+    results = torrent_manager.metadata_service.search(query)
+    return {"status": "ok", "results": results}
+
+
 @app.get("/version")
 async def get_version():
     try:

@@ -13,9 +13,13 @@
         <input type="text" id="magnet-input" name="magnet" placeholder="magnet:?xt=urn:btih:..." required style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #444; background: #333; color: white;" />
     </div>
 
-    <div style="width: 120px;">
+    <div style="width: 120px; position: relative;">
         <label for="tmdb-input" style="display: block; color: #ccc; margin-bottom: 5px; font-size: 0.9em;">TMDB ID (Opt)</label>
-        <input type="text" id="tmdb-input" name="tmdb_id" placeholder="e.g. 12345" style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #444; background: #333; color: white;" />
+        <div style="display: flex; gap: 5px;">
+            <input type="text" id="tmdb-input" name="tmdb_id" placeholder="e.g. 12345" style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #444; background: #333; color: white;" />
+            <button type="button" id="search-tmdb-btn" style="padding: 8px; background: #444; color: white; border: none; border-radius: 4px; cursor: pointer;">🔍</button>
+        </div>
+        <div id="tmdb-suggestions" style="display: none; position: absolute; top: 100%; left: 0; right: -150px; background: #252525; border: 1px solid #444; border-radius: 4px; z-index: 1000; margin-top: 5px; box-shadow: 0 4px 6px rgba(0,0,0,0.3);"></div>
     </div>
 
     <div style="width: 120px;">
@@ -160,6 +164,73 @@
         // Clear inputs
         input.value = '';
         if (tmdbInput) tmdbInput.value = '';
+      });
+  }
+
+  // --- TMDB Search Logic ---
+  const searchBtn = document.getElementById('search-tmdb-btn');
+  const suggestionsDiv = document.getElementById('tmdb-suggestions');
+
+  if (searchBtn) {
+      searchBtn.addEventListener('click', async () => {
+          let query = tmdbInput.value.trim();
+          if (!query) {
+              // Try to use magnet link as search query if ID is empty
+              query = input.value.trim();
+              if (query.startsWith('magnet:')) {
+                  const nameMatch = query.match(/dn=([^&]+)/);
+                  if (nameMatch) {
+                      query = decodeURIComponent(nameMatch[1].replace(/\+/g, ' '));
+                      // Pre-fill the input so the user can see what's being searched
+                      tmdbInput.value = query;
+                  }
+              }
+          }
+
+          if (!query) return;
+
+          searchBtn.textContent = '⏳';
+          try {
+              const resp = await fetch(`/search_tmdb?query=${encodeURIComponent(query)}`);
+              const data = await resp.json();
+
+              if (data.status === 'ok' && data.results.length > 0) {
+                  suggestionsDiv.innerHTML = data.results.map(r => `
+                      <div class="suggestion-item" data-id="${r.id}" data-type="${r.type}" style="padding: 10px; border-bottom: 1px solid #444; cursor: pointer; color: #eee; font-size: 0.9em; display: flex; gap: 10px; align-items: flex-start;">
+                          <img src="${r.poster_path ? 'https://image.tmdb.org/t/p/w92' + r.poster_path : 'https://via.placeholder.com/45x68?text=?'}" 
+                               style="width: 45px; border-radius: 4px; flex-shrink: 0;" />
+                          <div style="flex-grow: 1;">
+                              <div style="font-weight: bold;">${r.title} (${r.year})</div>
+                              <div style="font-size: 0.8em; color: #888;">${r.type.toUpperCase()} • ID: ${r.id}</div>
+                          </div>
+                      </div>
+                  `).join('');
+                  suggestionsDiv.style.display = 'block';
+
+                  document.querySelectorAll('.suggestion-item').forEach(item => {
+                      item.addEventListener('click', () => {
+                          tmdbInput.value = item.dataset.id;
+                          typeInput.value = item.dataset.type;
+                          suggestionsDiv.style.display = 'none';
+                      });
+                  });
+              } else {
+                  suggestionsDiv.innerHTML = '<div style="padding: 10px; color: #888;">No results found</div>';
+                  suggestionsDiv.style.display = 'block';
+                  setTimeout(() => { suggestionsDiv.style.display = 'none'; }, 2000);
+              }
+          } catch (e) {
+              console.error('TMDB Search Error:', e);
+          } finally {
+              searchBtn.textContent = '🔍';
+          }
+      });
+
+      // Close suggestions when clicking outside
+      document.addEventListener('click', (e) => {
+          if (!suggestionsDiv.contains(e.target) && e.target !== searchBtn && e.target !== tmdbInput) {
+              suggestionsDiv.style.display = 'none';
+          }
       });
   }
 
