@@ -86,6 +86,48 @@ class MetadataService:
 
         return None
 
+    def search(self, query: str) -> list[dict]:
+        """
+        Search TMDB for movies or TV shows.
+        Returns: A list of result objects {id, title, year, type}.
+        """
+        if not self.api_key:
+            return []
+
+        url = f"{self.TMDB_BASE_URL}/search/multi"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "accept": "application/json"
+        }
+        params = {"query": query}
+
+        try:
+            resp = requests.get(url, headers=headers, params=params, timeout=10)
+            if resp.status_code == 200:
+                results = []
+                for item in resp.json().get("results", []):
+                    media_type = item.get("media_type")
+                    if media_type not in ["movie", "tv"]:
+                        continue
+
+                    title = item.get("title") if media_type == "movie" else item.get("name")
+                    date = item.get("release_date") if media_type == "movie" else item.get("first_air_date")
+                    year = date.split("-")[0] if date else "N/A"
+
+                    results.append({
+                        "id": item.get("id"),
+                        "title": title,
+                        "year": year,
+                        "type": media_type
+                    })
+                return results[:5]  # Limit to 5 results
+            else:
+                self.logger.error(f"TMDB Search Error {resp.status_code}: {resp.text}")
+                return []
+        except Exception as e:
+            self.logger.error(f"Failed to search TMDB: {e}")
+            return []
+
     def update_cache(self, filename: str, tmdb_id: str):
         """
         Cache a TV show ID for future lookups.
