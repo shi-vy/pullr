@@ -94,6 +94,17 @@ class MetadataService:
         if not self.api_key:
             return []
 
+        original_query = query
+        # Clean query if it looks like a torrent filename
+        # This regex looks for common markers (S01, 1080p, Year) and captures everything before them
+        pattern = r"^(.*?)(?:[\. \-](?:S\d{2}E\d{2}|S\d{2}|1080p|720p|2160p|4k|WEB-DL|BluRay|BRRip|WEB|H\.265|x264|x265|HEVC|[\(\[\{]?(?:19|20)\d{2}[\)\]\}]?))"
+        match = re.search(pattern, query, re.IGNORECASE)
+        if match:
+            query = match.group(1)
+
+        query = query.replace('.', ' ').replace('_', ' ').strip()
+        self.logger.info(f"TMDB Search: '{original_query}' -> cleaned to '{query}'")
+
         url = f"{self.TMDB_BASE_URL}/search/multi"
         headers = {
             "Authorization": f"Bearer {self.api_key}",

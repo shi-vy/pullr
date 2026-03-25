@@ -181,6 +181,8 @@
                   const nameMatch = query.match(/dn=([^&]+)/);
                   if (nameMatch) {
                       query = decodeURIComponent(nameMatch[1].replace(/\+/g, ' '));
+                      // Pre-fill the input so the user can see what's being searched
+                      tmdbInput.value = query;
                   }
               }
           }
