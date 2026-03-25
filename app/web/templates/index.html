@@ -42,6 +42,21 @@
     </label>
   </div>
 
+  <div id="disk-usage-container" style="display: flex; gap: 15px; margin-bottom: 20px;">
+    {% if torrents.disk_usage %}
+      {% for label, info in torrents.disk_usage.items() %}
+        <div style="background: #252525; padding: 15px; border-radius: 8px; flex: 1; border: 1px solid #333;">
+          <div style="font-weight: bold; color: #ccc; margin-bottom: 5px; font-size: 0.9em;">{{ label }} Drive</div>
+          <div style="font-size: 1.4em; color: white; font-weight: 500;">{{ info.free }} free</div>
+          <div style="font-size: 0.85em; color: #888; margin-bottom: 10px;">of {{ info.total }} ({{ info.percent }}% used)</div>
+          <div style="height: 6px; background: #333; border-radius: 3px; overflow: hidden;">
+            <div style="height: 100%; width: {{ info.percent }}%; background: {% if info.percent > 90 %}#ff6680{% else %}#2196F3{% endif %};"></div>
+          </div>
+        </div>
+      {% endfor %}
+    {% endif %}
+  </div>
+
   <h2>📥 Manual Downloads</h2>
   <table>
     <thead>
@@ -168,9 +183,27 @@
     const data = JSON.parse(event.data);
     const manualTorrents = data.manual || {};
     const externalTorrents = data.external || {};
+    const diskUsage = data.disk_usage || {};
     populateTable(manualTableBody, manualTorrents, false);
     populateTable(externalTableBody, externalTorrents, true);
+    updateDiskUsage(diskUsage);
   };
+
+  function updateDiskUsage(usage) {
+    const container = document.getElementById('disk-usage-container');
+    if (!container || !usage) return;
+
+    container.innerHTML = Object.entries(usage).map(([label, info]) => `
+        <div style="background: #252525; padding: 15px; border-radius: 8px; flex: 1; border: 1px solid #333;">
+          <div style="font-weight: bold; color: #ccc; margin-bottom: 5px; font-size: 0.9em;">${label} Drive</div>
+          <div style="font-size: 1.4em; color: white; font-weight: 500;">${info.free} free</div>
+          <div style="font-size: 0.85em; color: #888; margin-bottom: 10px;">of ${info.total} (${info.percent}% used)</div>
+          <div style="height: 6px; background: #333; border-radius: 3px; overflow: hidden;">
+            <div style="height: 100%; width: ${info.percent}%; background: ${info.percent > 90 ? '#ff6680' : '#2196F3'};"></div>
+          </div>
+        </div>
+    `).join('');
+  }
 
   function populateTable(tableBody, torrents, isExternal) {
     tableBody.innerHTML = "";
