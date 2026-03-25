@@ -196,9 +196,13 @@
 
               if (data.status === 'ok' && data.results.length > 0) {
                   suggestionsDiv.innerHTML = data.results.map(r => `
-                      <div class="suggestion-item" data-id="${r.id}" data-type="${r.type}" style="padding: 10px; border-bottom: 1px solid #444; cursor: pointer; color: #eee; font-size: 0.9em;">
-                          <div style="font-weight: bold;">${r.title} (${r.year})</div>
-                          <div style="font-size: 0.8em; color: #888;">${r.type.toUpperCase()} • ID: ${r.id}</div>
+                      <div class="suggestion-item" data-id="${r.id}" data-type="${r.type}" style="padding: 10px; border-bottom: 1px solid #444; cursor: pointer; color: #eee; font-size: 0.9em; display: flex; gap: 10px; align-items: flex-start;">
+                          <img src="${r.poster_path ? 'https://image.tmdb.org/t/p/w92' + r.poster_path : 'https://via.placeholder.com/45x68?text=?'}" 
+                               style="width: 45px; border-radius: 4px; flex-shrink: 0;" />
+                          <div style="flex-grow: 1;">
+                              <div style="font-weight: bold;">${r.title} (${r.year})</div>
+                              <div style="font-size: 0.8em; color: #888;">${r.type.toUpperCase()} • ID: ${r.id}</div>
+                          </div>
                       </div>
                   `).join('');
                   suggestionsDiv.style.display = 'block';

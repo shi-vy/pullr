@@ -129,7 +129,8 @@ class MetadataService:
                         "id": item.get("id"),
                         "title": title,
                         "year": year,
-                        "type": media_type
+                        "type": media_type,
+                        "poster_path": item.get("poster_path")
                     })
                 return results[:5]  # Limit to 5 results
             else:
