@@ -158,6 +158,8 @@ class TorrentManager:
         self.config_data["external_torrent_scanning"] = enabled
         if not enabled:
             self.external_service.purge_external_torrents()
+        else:
+            self.external_service.app_start_time = time.time()
         self.logger.info(f"External torrent scanning {'enabled' if enabled else 'disabled'}")
 
     def get_disk_usage(self):
