@@ -243,6 +243,28 @@ class ExternalTorrentService:
 
             return False
 
+    def purge_external_torrents(self) -> int:
+        """Remove all auto-detected (source='external') torrents from tracking and the queue."""
+        with self.lock:
+            external_ids = [
+                tid for tid, t in self.torrents.items()
+                if t.source == "external"
+            ]
+            for tid in external_ids:
+                del self.torrents[tid]
+                self.known_torrent_ids.discard(tid)
+
+        for tid in external_ids:
+            if self.queue_service:
+                self.queue_service.remove_from_queue(tid)
+                if self.queue_service.is_active(tid):
+                    self.queue_service.clear_active()
+
+        if external_ids:
+            self.logger.info(f"Purged {len(external_ids)} auto-detected torrent(s) from tracking")
+
+        return len(external_ids)
+
     def mark_as_known(self, torrent_id: str) -> None:
         """
         Mark a torrent ID as known (used for manual torrents to prevent re-detection).
