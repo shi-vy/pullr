@@ -86,6 +86,60 @@ class MetadataService:
 
         return None
 
+    def search(self, query: str) -> list[dict]:
+        """
+        Search TMDB for movies or TV shows.
+        Returns: A list of result objects {id, title, year, type}.
+        """
+        if not self.api_key:
+            return []
+
+        original_query = query
+        # Clean query if it looks like a torrent filename
+        # This regex looks for common markers (S01, 1080p, Year) and captures everything before them
+        pattern = r"^(.*?)(?:[\. \-](?:S\d{2}E\d{2}|S\d{2}|1080p|720p|2160p|4k|WEB-DL|BluRay|BRRip|WEB|H\.265|x264|x265|HEVC|[\(\[\{]?(?:19|20)\d{2}[\)\]\}]?))"
+        match = re.search(pattern, query, re.IGNORECASE)
+        if match:
+            query = match.group(1)
+
+        query = query.replace('.', ' ').replace('_', ' ').strip()
+        self.logger.info(f"TMDB Search: '{original_query}' -> cleaned to '{query}'")
+
+        url = f"{self.TMDB_BASE_URL}/search/multi"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "accept": "application/json"
+        }
+        params = {"query": query}
+
+        try:
+            resp = requests.get(url, headers=headers, params=params, timeout=10)
+            if resp.status_code == 200:
+                results = []
+                for item in resp.json().get("results", []):
+                    media_type = item.get("media_type")
+                    if media_type not in ["movie", "tv"]:
+                        continue
+
+                    title = item.get("title") if media_type == "movie" else item.get("name")
+                    date = item.get("release_date") if media_type == "movie" else item.get("first_air_date")
+                    year = date.split("-")[0] if date else "N/A"
+
+                    results.append({
+                        "id": item.get("id"),
+                        "title": title,
+                        "year": year,
+                        "type": media_type,
+                        "poster_path": item.get("poster_path")
+                    })
+                return results[:5]  # Limit to 5 results
+            else:
+                self.logger.error(f"TMDB Search Error {resp.status_code}: {resp.text}")
+                return []
+        except Exception as e:
+            self.logger.error(f"Failed to search TMDB: {e}")
+            return []
+
     def update_cache(self, filename: str, tmdb_id: str):
         """
         Cache a TV show ID for future lookups.

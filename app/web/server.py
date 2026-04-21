@@ -112,22 +112,12 @@ async def select_files(torrent_id: str, files: str = Form(...), folder_name: str
         return {"status": "error", "error": str(e)}
 
 
-@app.get("/settings")
-async def get_settings():
-    if not torrent_manager:
-        return {"error": "manager not ready"}
-    return torrent_manager.get_settings()
-
-
-@app.post("/settings/external_scanning")
-async def set_external_scanning(enabled: str = Form(...)):
-    if not torrent_manager:
-        return {"status": "error", "message": "manager not ready"}
-    value = enabled.lower() == "true"
-    torrent_manager.set_external_scanning(value)
-    if config:
-        config.update_setting("external_torrent_scanning", value)
-    return {"status": "ok", "external_torrent_scanning": value}
+@app.get("/search_tmdb")
+async def search_tmdb(query: str):
+    if not torrent_manager or not torrent_manager.metadata_service:
+        return {"status": "error", "message": "Metadata service not ready"}
+    results = torrent_manager.metadata_service.search(query)
+    return {"status": "ok", "results": results}
 
 
 @app.get("/version")
