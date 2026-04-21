@@ -19,6 +19,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 # Injected from main.py
 torrent_manager = None
 logger = None
+config = None
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -109,6 +110,24 @@ async def select_files(torrent_id: str, files: str = Form(...), folder_name: str
         if logger:
             logger.error(f"Error selecting files: {e}")
         return {"status": "error", "error": str(e)}
+
+
+@app.get("/settings")
+async def get_settings():
+    if not torrent_manager:
+        return {"error": "manager not ready"}
+    return torrent_manager.get_settings()
+
+
+@app.post("/settings/external_scanning")
+async def set_external_scanning(enabled: str = Form(...)):
+    if not torrent_manager:
+        return {"status": "error", "message": "manager not ready"}
+    value = enabled.lower() == "true"
+    torrent_manager.set_external_scanning(value)
+    if config:
+        config.update_setting("external_torrent_scanning", value)
+    return {"status": "ok", "external_torrent_scanning": value}
 
 
 @app.get("/version")

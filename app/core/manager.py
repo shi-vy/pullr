@@ -148,6 +148,16 @@ class TorrentManager:
             self.logger.error(f"[ADD] Failed to add magnet: {e}")
             return None
 
+    def get_settings(self) -> dict:
+        return {
+            "external_torrent_scanning": self.external_service.enabled,
+        }
+
+    def set_external_scanning(self, enabled: bool) -> None:
+        self.external_service.enabled = enabled
+        self.config_data["external_torrent_scanning"] = enabled
+        self.logger.info(f"External torrent scanning {'enabled' if enabled else 'disabled'}")
+
     def get_disk_usage(self):
         """Get disk space information for configured paths."""
         temp_path = self.config_data.get("download_temp_path")

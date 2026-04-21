@@ -55,7 +55,12 @@ class ExternalTorrentService:
         if scan_interval is None:
             scan_interval = 0
         self.scan_interval = int(scan_interval) if scan_interval > 0 else 0
-        self.enabled = self.scan_interval > 0
+
+        # explicit boolean key takes precedence over interval-based inference
+        if "external_torrent_scanning" in config_data:
+            self.enabled = bool(config_data["external_torrent_scanning"])
+        else:
+            self.enabled = self.scan_interval > 0
 
         if self.enabled:
             self.logger.info(
