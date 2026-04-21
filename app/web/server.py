@@ -19,6 +19,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 # Injected from main.py
 torrent_manager = None
 logger = None
+config = None
 
 
 @app.get("/", response_class=HTMLResponse)

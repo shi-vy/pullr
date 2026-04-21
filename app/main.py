@@ -22,9 +22,10 @@ def main():
     manager = TorrentManager(rd, logger, config.poll_interval_seconds, config.data)
     manager.start()
 
-    # Attach manager + logger to web server module for shared state
+    # Attach manager, logger, and config to web server module for shared state
     web_server.torrent_manager = manager
     web_server.logger = logger
+    web_server.config = config
 
     # Start the web dashboard
     logger.info(f"Starting web dashboard on port {config.port}...")

@@ -61,6 +61,24 @@
     {% endif %}
   </div>
 
+  <details id="tools-section" style="margin-bottom: 20px; background: #1a1a1a; border: 1px solid #333; border-radius: 8px; padding: 12px 16px;">
+    <summary style="cursor: pointer; font-size: 1.1em; font-weight: bold; color: #ccc; user-select: none;">🛠️ Tools</summary>
+    <div style="margin-top: 14px; display: flex; flex-direction: column; gap: 10px;">
+
+      <label style="display: flex; align-items: center; cursor: pointer; user-select: none; background: #252525; padding: 12px; border-radius: 6px; border: 1px solid #2a2a2a;">
+        <input type="checkbox" id="externalScanningToggle" style="width: 20px; height: 20px; margin-right: 12px; cursor: pointer;">
+        <div>
+          <span style="font-weight: bold; color: #ff6680;">🔍 Auto-Detect RealDebrid Downloads</span>
+          <p style="margin: 4px 0 0 0; color: #888; font-size: 0.9em;">
+            Periodically scan RealDebrid for torrents added outside of Pullr and import them automatically.
+            Disable to only process torrents submitted via this dashboard.
+          </p>
+        </div>
+      </label>
+
+    </div>
+  </details>
+
   <h2>📥 Manual Downloads</h2>
   <table>
     <thead>
@@ -128,6 +146,35 @@
   quickDownloadToggle.addEventListener('change', () => {
     localStorage.setItem('quickDownloadMode', quickDownloadToggle.checked);
   });
+
+  // --- Tools: External Scanning Toggle ---
+  const externalScanningToggle = document.getElementById('externalScanningToggle');
+
+  async function loadSettings() {
+    try {
+      const resp = await fetch('/settings');
+      const data = await resp.json();
+      if (data.external_torrent_scanning !== undefined) {
+        externalScanningToggle.checked = data.external_torrent_scanning;
+      }
+    } catch (e) {
+      console.error('Failed to load settings:', e);
+    }
+  }
+
+  externalScanningToggle.addEventListener('change', async () => {
+    try {
+      await fetch('/settings/external_scanning', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ enabled: externalScanningToggle.checked.toString() })
+      });
+    } catch (e) {
+      console.error('Failed to update external scanning setting:', e);
+    }
+  });
+
+  loadSettings();
 
   // --- Handle Add Form ---
   const form = document.getElementById('add-form');

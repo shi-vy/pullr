@@ -101,6 +101,28 @@ class Config:
         except Exception as e:
             raise ConfigError(f"Media path '{self.data['media_path']}' is not writable: {e}")
 
+    def update_setting(self, key: str, value) -> None:
+        """Update a single key in config.yaml, preserving comments and formatting."""
+        lines = self.path.read_text(encoding="utf-8").splitlines(keepends=True)
+        key_prefix = f"{key}:"
+        updated = False
+
+        for i, line in enumerate(lines):
+            stripped = line.lstrip()
+            if stripped.startswith(key_prefix) and not stripped.startswith("#"):
+                indent = " " * (len(line) - len(line.lstrip()))
+                yaml_val = "true" if value is True else ("false" if value is False else str(value))
+                lines[i] = f"{indent}{key}: {yaml_val}\n"
+                updated = True
+                break
+
+        if not updated:
+            yaml_val = "true" if value is True else ("false" if value is False else str(value))
+            lines.append(f"{key}: {yaml_val}\n")
+
+        self.path.write_text("".join(lines), encoding="utf-8")
+        self.data[key] = value
+
     def get(self, key: str, default=None):
         return self.data.get(key, default)
 
@@ -145,6 +167,14 @@ class Config:
         if interval is None:
             return 0
         return int(interval) if interval > 0 else 0
+
+    @property
+    def external_torrent_scanning(self) -> bool:
+        if "external_torrent_scanning" in self.data:
+            return bool(self.data["external_torrent_scanning"])
+        # Backward compat: enabled if an interval is configured
+        interval = self.data.get("external_torrent_scan_interval_seconds", 15)
+        return bool(interval and int(interval) > 0)
 
     @property
     def jellyfin_mode(self) -> bool:
